@@ -1,0 +1,17 @@
+{
+  "summary": {
+    "claimNumber": ["claim number", "claim no", "claim id"],
+    "policyNumber": ["policy number", "policy no", "policy id"],
+    "patientName": ["patient name", "insured name", "member name"],
+    "patientAge": ["patient age", "age"],
+    "gender": ["gender", "sex"],
+    "hospitalName": ["hospital", "hospital name", "hospital name / address"],
+    "insuranceCompany": ["insurance company", "insurer", "insurance provider", "insurance"],
+    "tpaName": ["tpa", "third party administrator", "administrator"],
+    "admissionDate": ["admission date", "date of admission", "admitted on"],
+    "dischargeDate": ["discharge date", "date of discharge", "discharged on"],
+    "authorizedAmount": ["authorized amount", "approved amount", "sanctioned amount", "preauth amount"]
+  },
+  "sections": [],
+  "tables": []
+}
