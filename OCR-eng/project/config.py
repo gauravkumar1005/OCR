@@ -34,6 +34,23 @@ if not GROQ_API_KEY:
         "GROQ_API_KEY environment variable is missing. Set it in OCR-eng/.env before starting the OCR engine."
     )
 
+OCR_ENGINE = os.getenv("OCR_ENGINE", "paddleocr").strip().lower()
+
+if OCR_ENGINE not in {"paddleocr", "qwen", "qwen2.5-vl", "ollama"}:
+    raise EnvironmentError(
+        "OCR_ENGINE must be one of: paddleocr, qwen, qwen2.5-vl, ollama."
+    )
+
+OCR_ENGINE_DISPLAY_NAME = {
+    "paddleocr": "PaddleOCR",
+    "qwen": "Qwen2.5-VL (Ollama)",
+    "qwen2.5-vl": "Qwen2.5-VL (Ollama)",
+    "ollama": "Qwen2.5-VL (Ollama)",
+}[OCR_ENGINE]
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen2.5vl:7b")
+
 MODEL_NAME = "llama-3.3-70b-versatile"
 
 PROMPT_VERSION = "v1.2.0"
@@ -189,6 +206,7 @@ if not os.path.isdir(MERGED_DOCUMENT_DIR):
 print("=" * 70)
 print("Enterprise Medical IDP Configuration (Updated File Architecture)")
 print("=" * 70)
+print(f"OCR Engine         : {OCR_ENGINE_DISPLAY_NAME}")
 print(f"Model              : {MODEL_NAME}")
 print(f"Prompt Version     : {PROMPT_VERSION}")
 print(f"OCR Input Folder   : {MERGED_DOCUMENT_DIR}")

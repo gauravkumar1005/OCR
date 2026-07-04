@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from bson import ObjectId
@@ -124,7 +125,7 @@ class DocumentService:
                     document_type=normalized_document_type,
                 )
             else:
-                self._track_ocr_task(task, document_id=str(created_document.id))
+                self._track_background_task(task, document_id=str(created_document.id), label="OCR dispatch")
                 logger.info("OCR dispatch scheduled document_id=%s task_id=%s", created_document.id, id(task))
 
             return APIResponse.ok(
@@ -192,6 +193,9 @@ class DocumentService:
         return APIResponse.ok(DeleteDocumentResponse(document_id=document_id), message="Document deleted successfully")
 
     async def handle_ocr_callback(self, payload: OCRCallbackRequest) -> APIResponse[OCRCallbackResponse]:
+        callback_started_at = time.perf_counter()
+        logger.info("Callback received document_id=%s ocr_status=%s", payload.document_id, payload.ocr_status)
+
         if not ObjectId.is_valid(payload.document_id):
             raise ValidationException("Invalid document id")
 
@@ -207,17 +211,10 @@ class DocumentService:
             "error": callback_error,
         }
 
+        task: asyncio.Task[Any] | None = None
+
         if callback_status == OCRStatus.COMPLETED:
-            logger.info(
-                "OCR callback received completed payload document_id=%s document_type=%s",
-                payload.document_id,
-                document.document_type,
-            )
-            raw_ocr_payload = payload.raw_ocr_response or {}
-            mapped_data = await self.mapper_service.map_ocr_result(raw_ocr_payload, document_type=document.document_type)
-            update_fields["mapped_data"] = mapped_data
-            update_fields["processing_status"] = ProcessingStatus.COMPLETED
-            update_fields["error"] = None
+            update_fields["processing_status"] = ProcessingStatus.OCR_COMPLETED
         elif callback_status == OCRStatus.FAILED:
             update_fields["processing_status"] = ProcessingStatus.FAILED
         else:
@@ -228,10 +225,26 @@ class DocumentService:
             update_fields,
         )
         logger.info(
-            "OCR callback updated document_id=%s matched_count=%s modified_count=%s",
+            "Raw OCR saved document_id=%s matched_count=%s modified_count=%s",
             payload.document_id,
             matched_count,
             modified_count,
+        )
+
+        if callback_status == OCRStatus.COMPLETED:
+            try:
+                task = asyncio.create_task(self.process_mapping(payload.document_id))
+            except RuntimeError:
+                logger.exception("Failed to schedule background mapper document_id=%s", payload.document_id)
+                await self.process_mapping(payload.document_id)
+            else:
+                self._track_background_task(task, document_id=payload.document_id, label="mapping")
+                logger.info("Background mapper scheduled document_id=%s task_id=%s", payload.document_id, id(task))
+
+        logger.info(
+            "HTTP response returned for callback document_id=%s elapsed_seconds=%.3f",
+            payload.document_id,
+            time.perf_counter() - callback_started_at,
         )
 
         return APIResponse.ok(
@@ -243,6 +256,62 @@ class DocumentService:
             ),
             message="OCR callback processed successfully",
         )
+
+    async def process_mapping(self, document_id: str) -> None:
+        started_at = time.perf_counter()
+        logger.info("Background mapper started document_id=%s", document_id)
+
+        try:
+            document = await self.document_repository.get_by_id(document_id)
+            if document is None:
+                logger.warning("Background mapper skipped missing document_id=%s", document_id)
+                return
+
+            raw_ocr_payload = document.raw_ocr or {}
+            if not raw_ocr_payload:
+                logger.warning("Background mapper found no raw OCR document_id=%s", document_id)
+                await self.document_repository.update_statuses(
+                    document_id,
+                    processing_status=ProcessingStatus.FAILED,
+                    extra_fields={"error": "Raw OCR payload not available"},
+                )
+                return
+
+            await self.document_repository.update_statuses(
+                document_id,
+                processing_status=ProcessingStatus.MAPPING_IN_PROGRESS,
+            )
+
+            mapped_data = await self.mapper_service.map_ocr_result(raw_ocr_payload, document_type=document.document_type)
+            await self.document_repository.update_document_fields(
+                document_id,
+                {
+                    "mapped_data": mapped_data,
+                    "processing_status": ProcessingStatus.COMPLETED,
+                    "error": None,
+                },
+            )
+            logger.info(
+                "Background mapper completed document_id=%s execution_time_seconds=%.3f",
+                document_id,
+                time.perf_counter() - started_at,
+            )
+        except Exception as exc:
+            logger.exception("Background mapper failed document_id=%s", document_id)
+            try:
+                await self.document_repository.update_statuses(
+                    document_id,
+                    processing_status=ProcessingStatus.FAILED,
+                    extra_fields={"error": str(exc)},
+                )
+            except Exception:
+                logger.exception("Failed to persist mapper failure document_id=%s", document_id)
+        finally:
+            logger.info(
+                "Mapper execution time document_id=%s seconds=%.3f",
+                document_id,
+                time.perf_counter() - started_at,
+            )
 
     async def _dispatch_ocr(
         self,
@@ -358,29 +427,30 @@ class DocumentService:
             processing_status=document.processing_status,
         )
 
-    def _track_ocr_task(self, task: asyncio.Task[Any], *, document_id: str) -> None:
+    def _track_background_task(self, task: asyncio.Task[Any], *, document_id: str, label: str) -> None:
         self._pending_ocr_tasks.add(task)
-        logger.debug("Tracking OCR task document_id=%s task_id=%s", document_id, id(task))
+        logger.debug("Tracking %s task document_id=%s task_id=%s", label, document_id, id(task))
 
         def _on_done(completed_task: asyncio.Task[Any]) -> None:
             self._pending_ocr_tasks.discard(completed_task)
             try:
                 exception = completed_task.exception()
             except asyncio.CancelledError:
-                logger.exception("OCR task was cancelled document_id=%s task_id=%s", document_id, id(completed_task))
+                logger.exception("%s task was cancelled document_id=%s task_id=%s", label, document_id, id(completed_task))
                 return
             except Exception:
-                logger.exception("Failed to inspect OCR task completion document_id=%s task_id=%s", document_id, id(completed_task))
+                logger.exception("Failed to inspect %s task completion document_id=%s task_id=%s", label, document_id, id(completed_task))
                 return
 
             if exception is not None:
                 logger.exception(
-                    "OCR task failed document_id=%s task_id=%s error=%s",
+                    "%s task failed document_id=%s task_id=%s error=%s",
+                    label,
                     document_id,
                     id(completed_task),
                     exception,
                 )
             else:
-                logger.info("OCR task finished document_id=%s task_id=%s", document_id, id(completed_task))
+                logger.info("%s task finished document_id=%s task_id=%s", label, document_id, id(completed_task))
 
         task.add_done_callback(_on_done)
