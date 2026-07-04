@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from services import CallbackService, JobService, OCRService, PDFService, StorageService
+from services.callback_service import CallbackService
+from services.document_pipeline import DocumentPipeline
+from services.job_service_refactored import JobService
+from services.storage_service import StorageService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -20,17 +24,18 @@ TEMP_ROOT = BASE_DIR / "temp"
 # TODO: Restore a production callback timeout of 30-60 seconds once asynchronous callback processing is finalized.
 CALLBACK_TIMEOUT = (10, 1200)
 
-ocr_service = OCRService()
-logger.info("Selected OCR Engine: %s", ocr_service.engine_display_name)
-if ocr_service.engine_display_name == "Qwen2.5-VL (Ollama)":
+document_pipeline = DocumentPipeline()
+logger.info("OCR_ENGINE env raw value: %s", os.getenv("OCR_ENGINE", "<unset>"))
+logger.info("OCR_ENGINE config value: %s", document_pipeline.ocr_service.engine)
+logger.info("Selected OCR Engine: %s", document_pipeline.ocr_service.engine_display_name)
+if document_pipeline.ocr_service.engine_display_name == "Qwen2.5-VL (Ollama)":
     logger.info("OCR flow: Qwen2.5-VL (Ollama) is active; PaddleOCR is bypassed for page processing")
 else:
     logger.info("OCR flow: PaddleOCR is active for page processing")
 
 job_service = JobService(
     storage_service=StorageService(TEMP_ROOT),
-    pdf_service=PDFService(),
-    ocr_service=ocr_service,
+    document_pipeline=document_pipeline,
     callback_service=CallbackService(CALLBACK_TIMEOUT),
 )
 
