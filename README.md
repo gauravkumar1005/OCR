@@ -1,284 +1,146 @@
-# Insurance Document Intelligence Platform
+# Claim OCR Setup
 
-Enterprise-grade platform for uploading insurance documents, associating them with Claim IDs, storing files in Cloudinary, dispatching OCR jobs to a separate OCR engine, receiving OCR callbacks, and presenting mapped results in a modern Next.js frontend.
+Claim OCR is a three-part system for uploading claims PDFs, extracting OCR data, and reviewing the structured output in a browser.
 
----
+## Architecture
 
-## Overview
+- `backend/` is the FastAPI service that stores claim records in MongoDB, accepts uploads, dispatches OCR jobs, and receives OCR callbacks.
+- `engine/` is the OCR processing service and batch pipeline. It exposes a small FastAPI launcher and also runs the full extraction pipeline as a subprocess.
+- `frontend/` is the React + Vite review desk used to upload claims, monitor processing, and edit extracted fields.
 
-This platform supports the full document intelligence flow:
+## End-To-End Flow
 
-- Upload insurance documents
-- Associate documents with Claim IDs
-- Store uploaded files in Cloudinary
-- Dispatch each document to an external OCR engine over HTTP
-- Receive OCR callbacks after processing completes
-- Persist raw OCR JSON in MongoDB
-- Generate frontend-friendly mapped JSON through the mapper architecture
-- Expose document retrieval APIs for the frontend
+1. A user uploads a PDF from the frontend.
+2. The frontend sends the file to `POST /claims/upload` on the backend.
+3. The backend uploads the file to Cloudinary, creates a claim record in MongoDB, and dispatches an OCR job to the engine.
+4. The engine runs `engine/main.py`, writes intermediate artifacts under `engine/RESULT/`, and sends the final OCR payload back to the backend callback endpoint.
+5. The backend stores the raw OCR document data in MongoDB and exposes it through `GET /claims/{claim_id}`.
+6. The frontend polls the claim until processing completes, then allows the reviewer to edit extracted entities and update claim status.
 
-The OCR engine runs as a separate service in `OCR-eng/` and communicates with the FastAPI backend through HTTP.
+## Setup Order
 
----
+1. Start MongoDB.
+2. Configure the backend `.env` file.
+3. Configure the engine `.env` file with the Groq API key and callback settings.
+4. Start the backend API.
+5. Start the engine API.
+6. Start the frontend.
 
-## Current Features
+## Local Ports
 
-- Claim-based document upload
-- Multiple document types with a default of `combined_document`
-- Cloudinary file storage
-- MongoDB persistence with Beanie ODM
-- FastAPI backend with structured service/repository layers
-- Asynchronous OCR dispatch
-- OCR callback endpoint for completed or failed jobs
-- Raw OCR JSON storage
-- Mapper architecture with strategy-based mappers
-- REST APIs for document retrieval and deletion
-- Swagger/OpenAPI documentation
-- Next.js frontend dashboard
-- Upload page with drag-and-drop PDF support
-- Claim details page grouped by Claim ID
-- Split-screen document viewer with PDF preview and mapped data panels
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
+- Engine API: `http://localhost:8001`
 
----
-
-## Project Structure
-
-```text
-Insurance Document Intelligence Platform/
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── database/
-│   │   ├── dependencies/
-│   │   ├── exceptions/
-│   │   ├── middleware/
-│   │   ├── models/
-│   │   ├── repositories/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   ├── utils/
-│   │   └── config/mapping/
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── venv/ (local only)
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   ├── features/
-│   ├── lib/
-│   ├── store/
-│   ├── package.json
-│   ├── package-lock.json
-│   └── .env.example
-├── OCR-eng/
-│   ├── app.py
-│   ├── main.py
-│   ├── OCR_Extraction_folder/
-│   ├── document_grouper/
-│   ├── project/
-│   ├── models/
-│   ├── requirements.txt
-│   └── temp/ and RESULT/ (generated)
-├── README.md
-└── .gitignore
-```
-
----
-
-## Tech Stack
+## Environment Summary
 
 ### Backend
 
-- FastAPI
-- Python
-- Beanie ODM
-- Motor / MongoDB
-- MongoDB Atlas compatible configuration
-- Pydantic v2
-- Cloudinary
-- requests
-- Uvicorn
+- `MONGO_URI`
+- `MONGO_DB_NAME`
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
+- `OCR_ENGINE_URL`
+- `BACKEND_PUBLIC_URL`
+- `APP_NAME`
+- `ENV`
+- `CORS_ORIGINS`
 
-### OCR Engine
+### Engine
 
-- Flask
-- Python
-- requests
-- OCR / document processing pipeline modules in `OCR-eng/`
+- `GROQ_API_KEY`
+- `OCR_PDF_PATH`
+- `OCR_CALLBACK_URL`
+- `OCR_CALLBACK_METHOD`
+- `OCR_CLAIM_ID`
+- `OCR_DOCUMENT_ID`
+- `OCR_DOCUMENT_TYPE`
+- `OCR_FILE_URL`
+- `OCR_MIME_TYPE`
+- `OCR_MAX_PAGES` or `MAX_PDF_PAGES`
+- `OCR_RESULT_ROOT`
+- `OCR_RUN_ID`
 
 ### Frontend
 
-- Next.js 15
-- React 19
-- TypeScript
-- Tailwind CSS
-- Redux Toolkit
-- RTK Query
-- React Hook Form
-- Zod
-- React Dropzone
-- React PDF
-- TanStack Table
-- Lucide React
-- Framer Motion
-- Sonner
-- Local shadcn-style UI primitives
+- No build-time `.env` is required by default.
+- The API base URL is stored in browser `localStorage` and can be changed from the settings modal.
 
----
-
-## Installation
+## Development Commands
 
 ### Backend
 
-```powershell
+```bash
 cd backend
 python -m venv venv
-venv\Scripts\Activate.ps1
+venv\Scripts\activate
 pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-### OCR Engine
+### Engine API
 
-```powershell
-cd OCR-eng
+```bash
+cd engine
 python -m venv venv
-venv\Scripts\Activate.ps1
+venv\Scripts\activate
 pip install -r requirements.txt
+uvicorn api:app --reload --port 8001
+```
+
+### Engine Pipeline
+
+```bash
+cd engine
+python main.py
 ```
 
 ### Frontend
 
-```powershell
+```bash
 cd frontend
 npm install
-copy .env.example .env.local
-```
-
----
-
-## Environment Variables
-
-### Backend `backend/.env.example`
-
-| Variable | Description |
-|---|---|
-| `APP_NAME` | FastAPI application name |
-| `API_PREFIX` | Base API prefix used by backend routes |
-| `MONGODB_URI` | MongoDB connection string |
-| `DATABASE_NAME` | MongoDB database name |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
-| `OCR_ENGINE_URL` | OCR engine base URL for dispatching OCR jobs. For local development, point this to `http://127.0.0.1:8001` |
-| `OCR_API_KEY` | Optional bearer token forwarded to the OCR engine |
-| `MAX_UPLOAD_SIZE` | Maximum upload size in bytes |
-| `LOG_LEVEL` | Application log level |
-| `CORS_ORIGINS` | Allowed CORS origins |
-
-### Frontend `frontend/.env.example`
-
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | Backend base URL used by the Next.js client |
-
-### OCR Engine configuration
-
-The OCR engine currently keeps its local runtime configuration in `OCR-eng/project/config.py`. There is not a committed `.env.example` for that service yet.
-
----
-
-## Running the Project
-
-### Backend
-
-```powershell
-cd backend
-venv\Scripts\Activate.ps1
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-### OCR Engine
-
-```powershell
-cd OCR-eng
-venv\Scripts\Activate.ps1
-python app.py
-```
-
-### Frontend
-
-```powershell
-cd frontend
 npm run dev
 ```
 
----
-
-## API Documentation
-
-Swagger UI is available from the FastAPI backend at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
----
-
-## Workflow
-
-```text
-Document Upload
-↓
-Cloudinary
-↓
-OCR Engine
-↓
-OCR Callback
-↓
-Raw OCR
-↓
-Mapper
-↓
-Mapped JSON
-↓
-Frontend
-```
-
----
-
-## Implemented APIs
+## API Highlights
 
 ### Backend
 
+- `POST /claims/upload`
+- `POST /claims`
+- `GET /claims`
+- `GET /claims/{claim_id}`
+- `PATCH /claims/{claim_id}/status`
+- `DELETE /claims/{claim_id}`
+- `POST /claims/{claim_id}/documents`
+- `POST /claims/{claim_id}/documents/bulk`
+- `POST|PATCH /claims/{claim_id}/documents/callback`
+- `GET /uploads/cloudinary-signature`
+- `POST /uploads/pdf`
 - `GET /health`
-- `POST /api/v1/documents/upload`
-- `GET /api/v1/documents?claimId={claimId}`
-- `GET /api/v1/documents/{documentId}`
-- `GET /api/v1/documents/{documentId}/raw-ocr`
-- `GET /api/v1/documents/{documentId}/mapped`
-- `DELETE /api/v1/documents/{documentId}`
-- `POST /api/ocr/callback`
-- `PATCH /api/ocr/callback`
 
-### OCR Engine
+### Engine
 
-- `GET /health`
 - `POST /ocr/process`
+- `POST /run`
+- `GET /health`
 
----
+## Deployment Notes
 
-## Future Roadmap
+- Keep backend, engine, and frontend base URLs aligned in deployment.
+- Set `BACKEND_PUBLIC_URL` to a publicly reachable callback URL when the engine runs outside the backend process.
+- Set `OCR_ENGINE_URL` in the backend to the deployed engine API URL.
+- Lock down CORS in production instead of using the default wildcard setting.
+- Store secrets only in environment variables, never in committed `.env` files.
 
-- Additional document mappers
-- Claim Aggregator
-- Investigation Dashboard
-- AI Validation
-- Fraud Detection
-- Cross-document comparison
+## Common Issues
 
----
+- MongoDB connection failures usually mean `MONGO_URI` is wrong or MongoDB is not running.
+- Missing `GROQ_API_KEY` will stop the engine pipeline at startup.
+- `pdf2image` requires the system PDF conversion dependency stack to be installed.
+- If the frontend cannot reach the API, update the base URL from the settings modal and test the connection.
+- Large PDFs can be slow because the pipeline writes many intermediate artifacts under `engine/RESULT/`.
 
-## License
 
-MIT
