@@ -214,6 +214,14 @@ def load_page_classifications() -> Dict[str, List[int]]:
 
             )
 
+            if config.MAX_OCR_PAGES is not None and page_number > config.MAX_OCR_PAGES:
+                logger.warning(
+                    "Skipping stale page %s beyond max OCR pages %s in current run.",
+                    page_number,
+                    config.MAX_OCR_PAGES,
+                )
+                continue
+
             grouped_pages[
 
                 document_type
@@ -600,7 +608,7 @@ def merge_document_type(
 
         )
 
-def run_merger() -> None:
+def run_merger(result_dir: str | None = None, run_id: str | None = None) -> None:
     """
     Executes the complete document merger pipeline.
 
@@ -621,6 +629,14 @@ def run_merger() -> None:
     Save merged OCR
     """
 
+    config.configure_runtime_context(
+        result_dir=result_dir,
+        run_id=run_id
+    )
+
+    active_run_id = run_id or config.RUN_ID
+    active_result_dir = result_dir or config.CURRENT_RESULT_DIR
+
     os.makedirs(
         config.MERGED_OUTPUT_DIR,
         exist_ok=True
@@ -628,6 +644,9 @@ def run_merger() -> None:
 
     logger.info("=" * 80)
     logger.info("Starting Document Merger")
+    logger.info("Run ID: %s", active_run_id)
+    logger.info("Current Result Directory: %s", active_result_dir)
+    logger.info("Max OCR Pages: %s", config.MAX_OCR_PAGES)
     logger.info("=" * 80)
 
 

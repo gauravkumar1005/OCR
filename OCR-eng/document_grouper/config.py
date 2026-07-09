@@ -24,14 +24,57 @@ Insurance Form
 
 import os
 
+
+def _parse_optional_page_limit(*env_names: str):
+    for env_name in env_names:
+        raw_value = os.getenv(env_name)
+        if raw_value is None:
+            continue
+
+        raw_value = raw_value.strip()
+        if not raw_value:
+            continue
+
+        try:
+            parsed = int(raw_value)
+        except ValueError:
+            continue
+
+        if parsed > 0:
+            return parsed
+
+    return None
+
+
 # ==========================================================================
 # BASE OUTPUT
 # ==========================================================================
 
-BASE_OUTPUT = os.path.join(
+RUN_ID = os.getenv("OCR_CURRENT_RUN_ID") or os.getenv("OCR_RUN_ID")
+BASE_OUTPUT = os.getenv("OCR_CURRENT_RESULT_DIR") or os.path.join(
     "RESULT",
     "MEDSAVE"
 )
+CURRENT_RESULT_DIR = BASE_OUTPUT
+MAX_OCR_PAGES = _parse_optional_page_limit("OCR_MAX_PAGES", "MAX_PDF_PAGES")
+# NOTE: None means "no cap, process every page" - merger.py already checks
+# `is not None` before comparing against it, so leaving MAX_PDF_PAGES blank
+# in .env correctly disables the page cap here too.
+
+
+def configure_runtime_context(result_dir: str | None = None, run_id: str | None = None) -> None:
+    """Update merger paths to the active OCR run folder."""
+    global BASE_OUTPUT, CURRENT_RESULT_DIR, RUN_ID, OCR_DIR, CLASSIFICATION_DIR, MERGED_OUTPUT_DIR
+
+    if result_dir:
+        BASE_OUTPUT = str(result_dir)
+        CURRENT_RESULT_DIR = BASE_OUTPUT
+    if run_id:
+        RUN_ID = run_id
+
+    OCR_DIR = os.path.join(BASE_OUTPUT, "05_ocr")
+    CLASSIFICATION_DIR = os.path.join(BASE_OUTPUT, "06_document_classification")
+    MERGED_OUTPUT_DIR = os.path.join(BASE_OUTPUT, "08_merged_documents")
 
 # ==========================================================================
 # INPUT DIRECTORIES

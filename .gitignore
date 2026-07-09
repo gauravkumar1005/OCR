@@ -31,6 +31,9 @@ OCR-eng/venv/
 *.env
 .env.*
 !.env.example
+backend/.env
+OCR-eng/.env
+frontend/.env
 
 # ======================================================
 # Logs

@@ -12,7 +12,8 @@ def convert_pdf_to_images(
     pdf_path,
     output_folder,
     dpi=300,
-    image_format="PNG"
+    image_format="PNG",
+    max_pages=None,
 
 ):
 
@@ -45,15 +46,20 @@ def convert_pdf_to_images(
 
     try:
 
+        convert_kwargs = {
+            "dpi": dpi,
+            "fmt": "png",
+            "thread_count": 4,
+        }
+        if max_pages is not None:
+            convert_kwargs["first_page"] = 1
+            convert_kwargs["last_page"] = max_pages
+
         pages = convert_from_path(
 
             pdf_path,
 
-            dpi=dpi,
-
-            fmt="png",
-
-            thread_count=4,
+            **convert_kwargs,
 
         )
 

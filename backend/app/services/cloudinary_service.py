@@ -1,60 +1,77 @@
-from __future__ import annotations
+"""
+Server-side Cloudinary upload helper. Used when the BACKEND itself receives
+an uploaded file and wants to send it to Cloudinary on the user's behalf - as
+opposed to the earlier `uploads.router.get_cloudinary_signature` flow, where
+the frontend uploads directly to Cloudinary using a signature.
 
-import asyncio
-import io
-from uuid import uuid4
-
+Both approaches are valid; use this one when you want the backend to own the
+upload (simpler frontend, but the file passes through your server).
+"""
 import cloudinary
 import cloudinary.uploader
+from fastapi import UploadFile, HTTPException
 
-from app.core.config import Settings
-from app.exceptions.base import CloudinaryException
+from app.config import settings
+
+# Configure the Cloudinary SDK once, using the same credentials already
+# defined in app/config.py (.env).
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+    secure=True,
+)
+
+# Only allow document-type files for claims (avoid accidental image/video
+# uploads bloating the "claims" folder). Adjust as needed.
+ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+MAX_FILE_SIZE_MB = 25
 
 
-class CloudinaryService:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        if settings.CLOUDINARY_CLOUD_NAME and settings.CLOUDINARY_API_KEY and settings.CLOUDINARY_API_SECRET:
-            cloudinary.config(
-                cloud_name=settings.CLOUDINARY_CLOUD_NAME,
-                api_key=settings.CLOUDINARY_API_KEY,
-                api_secret=settings.CLOUDINARY_API_SECRET,
-                secure=True,
-            )
+async def upload_pdf_to_cloudinary(file: UploadFile, folder: str = "claims") -> dict:
+    """
+    Uploads an incoming FastAPI UploadFile to Cloudinary and returns the
+    relevant Cloudinary response fields (secure_url, public_id, etc.).
 
-    async def upload_file(
-        self,
-        *,
-        file_bytes: bytes,
-        file_name: str,
-        mime_type: str,
-    ) -> dict[str, str]:
-        public_id = f"documents/{uuid4()}"
-        file_obj = io.BytesIO(file_bytes)
+    Raises HTTPException(400) for invalid file type / size, and
+    HTTPException(502) if Cloudinary itself fails.
+    """
+    filename = file.filename or "upload"
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
+        )
 
-        try:
-            result = await asyncio.to_thread(
-                cloudinary.uploader.upload,
-                file_obj,
-                resource_type="auto",
-                public_id=public_id,
-                overwrite=False,
-            )
-            return {
-                "secure_url": result["secure_url"],
-                "public_id": result["public_id"],
-                "resource_type": result.get("resource_type", "auto"),
-                "mime_type": mime_type,
-            }
-        except Exception as exc:  # noqa: BLE001
-            raise CloudinaryException("Failed to upload file to Cloudinary") from exc
+    contents = await file.read()
+    size_mb = len(contents) / (1024 * 1024)
+    if size_mb > MAX_FILE_SIZE_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({size_mb:.1f} MB). Max allowed is {MAX_FILE_SIZE_MB} MB.",
+        )
 
-    async def delete_file(self, *, public_id: str, resource_type: str = "raw") -> None:
-        try:
-            await asyncio.to_thread(
-                cloudinary.uploader.destroy,
-                public_id,
-                resource_type=resource_type,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise CloudinaryException("Failed to delete file from Cloudinary") from exc
+    try:
+        # resource_type="auto" lets Cloudinary correctly store PDFs
+        # (which Cloudinary treats as "raw"/"image" depending on content).
+        result = cloudinary.uploader.upload(
+            contents,
+            folder=folder,
+            resource_type="auto",
+            use_filename=True,
+            unique_filename=True,
+            overwrite=False,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Cloudinary upload failed: {e}")
+
+    return {
+        "secure_url": result.get("secure_url"),
+        "public_id": result.get("public_id"),
+        "resource_type": result.get("resource_type"),
+        "format": result.get("format"),
+        "bytes": result.get("bytes"),
+        "original_filename": filename,
+        "mime_type": file.content_type or "application/octet-stream",
+    }

@@ -1,6 +1,7 @@
 import time
 import random
 import logging
+import re
 from groq import Groq
 from . import config     # Pulls configurations dynamically from your config.py
 
@@ -11,6 +12,38 @@ GROQ_KEYS_POOL = [
 ]
 
 current_key_idx = 0
+
+
+class LLMJsonValidationError(Exception):
+    """Raised when Groq's strict JSON mode itself rejects the model's
+    output (code=json_validate_failed) - a non-429, non-retryable-by-default
+    error. Groq still hands back the malformed text it rejected under
+    'failed_generation' in the error body; we carry that through here so the
+    caller can run it through our EXISTING local JSON repair pipeline
+    (_repair_json_text / _repair_malformed_json_keys in parser.py) instead of
+    losing the whole document to an empty fallback payload."""
+
+    def __init__(self, message: str, failed_generation: str | None = None):
+        super().__init__(message)
+        self.failed_generation = failed_generation
+
+
+def _extract_failed_generation(error_text: str) -> str | None:
+    """Groq embeds the malformed model output verbatim under
+    'failed_generation' inside the error body, e.g.:
+        {'error': {..., 'failed_generation': '{...malformed json...}'}}
+    Pull that raw text out so it can be repaired locally rather than thrown
+    away."""
+    match = re.search(r"'failed_generation':\s*'(.*)'\s*\}\s*\}\s*$", error_text, re.DOTALL)
+    if not match:
+        return None
+    raw = match.group(1)
+    # str(exception) renders real control chars as Python escape literals
+    # (\n, \t, \') - decode those back to get real, parseable JSON text.
+    try:
+        return raw.encode("utf-8").decode("unicode_escape")
+    except Exception:
+        return raw
 
 def get_current_client():
     """Instantiates a client using the currently active API key slot."""
@@ -84,6 +117,15 @@ def call_groq_with_resilience(system_prompt: str, user_prompt: str) -> tuple:
                 retry += 1
                 
             else:
+                if "json_validate_failed" in error_msg or "failed to generate json" in error_msg:
+                    failed_generation = _extract_failed_generation(str(e))
+                    if failed_generation:
+                        logging.warning(
+                            "⚠️ Groq rejected malformed JSON output (json_validate_failed). "
+                            "Recovering the raw generation for local repair instead of discarding it."
+                        )
+                        raise LLMJsonValidationError(str(e), failed_generation=failed_generation)
+
                 logging.error(f"Unrecoverable Non-429 API exception detected: {e}")
                 raise e
 

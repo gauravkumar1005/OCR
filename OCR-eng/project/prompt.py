@@ -116,6 +116,7 @@ TABLE EXTRACTION PROTOCOL
 ────────────────────────────────────────
 Extract every table completely.
 • Preserve explicit column headers exactly as printed.
+• If a header contains punctuation or awkward OCR artifacts, keep the readable label in `headers` but normalize the row key to a JSON-safe equivalent. Never emit escaped apostrophes like \' in keys.
 • Extract every single row. Never summarize rows using ellipses ("...") or phrases like "etc."
 • If a table physically splits across page boundaries, stitch the rows seamlessly into a single continuous array under `all_extracted_tables`.
 
