@@ -29,6 +29,21 @@ class Settings(BaseSettings):
     ENV: str = "development"
     CORS_ORIGINS: list[str] = ["*"]
 
+    # ---- Auth / JWT ----
+    # IMPORTANT: override JWT_SECRET_KEY via .env in production. This default
+    # is only here so the app doesn't crash on a fresh clone.
+    JWT_SECRET_KEY: str = "change-this-secret-key-in-env-file"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # ---- OCR engine callback auth ----
+    # Shared secret (NOT a user JWT) so the OCR engine - a machine, not a
+    # logged-in reviewer - can still POST results back to
+    # /claims/{claim_id}/documents/callback after that router got locked
+    # down with get_current_user. Override via .env in production.
+    OCR_CALLBACK_SECRET: str = "change-this-ocr-callback-secret"
+
     class Config:
         env_file = ".env"
 

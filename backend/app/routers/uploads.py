@@ -16,12 +16,15 @@ IT talk to Cloudinary.
 import time
 import hashlib
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form
 
 from app.config import settings
+from app.core.security import get_current_user
 from app.services.cloudinary_service import upload_pdf_to_cloudinary
 
-router = APIRouter(prefix="/uploads", tags=["uploads"])
+router = APIRouter(
+    prefix="/uploads", tags=["uploads"], dependencies=[Depends(get_current_user)]
+)
 
 
 @router.get("/cloudinary-signature")

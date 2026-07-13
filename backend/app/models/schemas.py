@@ -188,3 +188,35 @@ class EntityUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 class TablesUpdateRequest(BaseModel):
     tables: List[Any]
+
+
+# ---------------------------------------------------------------------------
+# 5. Auth (signup / login / refresh) - single admin/reviewer role, no
+#    role field. Password hash is NEVER returned to the client.
+# ---------------------------------------------------------------------------
+class SignupRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8)
+    name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    name: Optional[str] = None
+    created_at: datetime

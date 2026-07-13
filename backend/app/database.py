@@ -18,6 +18,7 @@ database = client[settings.MONGO_DB_NAME]
 # Collections
 claims_collection = database["claims"]
 documents_collection = database["documents"]  # one row per OCR-extracted sub-document
+users_collection = database["users"]  # admin / reviewer login accounts
 
 
 async def ensure_indexes() -> None:
@@ -41,3 +42,6 @@ async def ensure_indexes() -> None:
     )
     await claims_collection.create_index("created_at", name="claims_created_at")
     await claims_collection.create_index("status", name="claims_status")
+    await users_collection.create_index(
+        "email", unique=True, name="uniq_user_email"
+    )

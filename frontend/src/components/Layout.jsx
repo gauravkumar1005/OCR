@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import {
   UploadCloud,
@@ -6,8 +6,10 @@ import {
   FolderOpen,
   Stamp,
   Settings,
+  LogOut,
 } from "lucide-react";
 import SettingsModal from "./SettingsModal.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const NAV_ITEMS = [
   { to: "/", label: "Upload", index: "01", icon: UploadCloud, end: true },
@@ -17,6 +19,13 @@ const NAV_ITEMS = [
 
 export default function Layout({ children }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="min-h-screen paper-texture flex">
@@ -62,13 +71,28 @@ export default function Layout({ children }) {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-ink/10">
+        <div className="p-4 border-t border-ink/10 space-y-3">
+          {user && (
+            <p
+              className="text-xs text-ink-soft font-mono truncate"
+              title={user.name || user.email}
+            >
+              {user.name || user.name || user.email}
+            </p>
+          )}
           <button
             onClick={() => setSettingsOpen(true)}
             className="flex items-center gap-2 text-xs text-ink-soft hover:text-ink transition-colors font-mono"
           >
             <Settings size={14} />
             API endpoint
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-xs text-ink-soft hover:text-stamp-red transition-colors font-mono"
+          >
+            <LogOut size={14} />
+            Log out
           </button>
         </div>
       </aside>
@@ -79,9 +103,14 @@ export default function Layout({ children }) {
           <Stamp size={18} />
           <span className="font-display text-base">Claim OCR</span>
         </div>
-        <button onClick={() => setSettingsOpen(true)}>
-          <Settings size={18} />
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setSettingsOpen(true)}>
+            <Settings size={18} />
+          </button>
+          <button onClick={handleLogout}>
+            <LogOut size={18} />
+          </button>
+        </div>
       </div>
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-ink text-paper flex justify-around py-2 shadow-[0_-2px_10px_rgba(0,0,0,0.15)]">
         {NAV_ITEMS.map((item) => (

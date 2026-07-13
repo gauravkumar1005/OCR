@@ -25,7 +25,9 @@ import logging
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.security import get_current_user, verify_ocr_callback_secret
 
 from app.database import claims_collection, documents_collection
 from app.models.schemas import (
@@ -40,7 +42,21 @@ from app.models.schemas import (
 )
 from app.utils import now_utc, to_object_id, serialize_doc
 
-router = APIRouter(prefix="/claims/{claim_id}/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/claims/{claim_id}/documents",
+    tags=["documents"],
+    dependencies=[Depends(get_current_user)],
+)
+
+# The OCR engine callback is called by a machine (no user login), so it
+# lives on its own router with its own auth (shared secret query param)
+# instead of the user-JWT dependency above. See core/security.py::
+# verify_ocr_callback_secret and claims.py::_build_callback_url.
+callback_router = APIRouter(
+    prefix="/claims/{claim_id}/documents",
+    tags=["documents"],
+    dependencies=[Depends(verify_ocr_callback_secret)],
+)
 logger = logging.getLogger(__name__)
 
 _TRAILING_DIGITS_RE = re.compile(r"(\d+)(?=\.\w+$)")
@@ -286,7 +302,7 @@ def _extract_llm_json_entries(payload: OcrEngineCallbackRequest) -> list:
     return []
 
 
-@router.api_route("/callback", methods=["POST", "PATCH"], response_model=List[DocumentOut])
+@callback_router.api_route("/callback", methods=["POST", "PATCH"], response_model=List[DocumentOut])
 async def ingest_ocr_callback(claim_id: str, payload: OcrEngineCallbackRequest):
     """Dedicated callback endpoint for the OCR engine final payload.
 

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import ensure_indexes
-from app.routers import claims, documents, uploads
+from app.routers import auth, claims, documents, uploads
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -24,8 +24,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(claims.router)
 app.include_router(documents.router)
+app.include_router(documents.callback_router)
 app.include_router(uploads.router)
 
 

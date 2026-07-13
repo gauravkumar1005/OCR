@@ -23,12 +23,13 @@ import mimetypes
 from typing import List, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pymongo import DESCENDING
 
 from app.config import settings
+from app.core.security import get_current_user
 from app.database import claims_collection, documents_collection
 from app.models.schemas import (
     ClaimCreateRequest,
@@ -41,7 +42,9 @@ from app.models.schemas import (
 from app.services.cloudinary_service import upload_pdf_to_cloudinary
 from app.utils import now_utc, serialize_doc, to_object_id
 
-router = APIRouter(prefix="/claims", tags=["claims"])
+router = APIRouter(
+    prefix="/claims", tags=["claims"], dependencies=[Depends(get_current_user)]
+)
 logger = logging.getLogger(__name__)
 DEFAULT_DOCUMENT_TYPE = "claim_pdf"
 ENGINE_PROCESS_PATH = "/ocr/process"
@@ -52,7 +55,12 @@ def _build_engine_dispatch_url() -> str:
 
 
 def _build_callback_url(claim_id: str) -> str:
-    return f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/claims/{claim_id}/documents/callback"
+    base = f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/claims/{claim_id}/documents/callback"
+    # Engine has no user login, so it authenticates via a shared secret
+    # query param instead of a Bearer JWT - see core/security.py::
+    # verify_ocr_callback_secret.
+    query = urlencode({"key": settings.OCR_CALLBACK_SECRET})
+    return f"{base}?{query}"
 
 
 def _normalize_document_type(document_type: Optional[str]) -> str:
