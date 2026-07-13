@@ -9,8 +9,17 @@ import {
   ChevronLeft,
   Check,
   CircleDot,
+  Trash2,
+  Plus,
+  X,
 } from "lucide-react";
-import { getClaim, updateEntities, updateClaimStatus } from "../api/client.js";
+import {
+  getClaim,
+  updateEntities,
+  deleteEntity,
+  updateTables,
+  updateClaimStatus,
+} from "../api/client.js";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 function titleCase(s) {
@@ -30,6 +39,12 @@ export default function DocumentDataPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [newFieldKey, setNewFieldKey] = useState("");
+  const [newFieldValue, setNewFieldValue] = useState("");
+  const [deletingField, setDeletingField] = useState(null);
+  const [editedTables, setEditedTables] = useState({}); // documentType -> tables array
+  const [tablesSaving, setTablesSaving] = useState(false);
+  const [tablesSaved, setTablesSaved] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -74,10 +89,185 @@ export default function DocumentDataPage() {
   const hasChanges = Object.keys(fieldsForActive).length > 0;
 
   const entities = activeDoc?.all_extracted_entities || {};
-  const totalFields = Object.keys(entities).length;
-  const missingCount = Object.values(entities).filter(
+  // Union of saved fields + any newly-added/edited fields that haven't been
+  // saved yet, so a freshly-added field shows up immediately without a
+  // round-trip to the backend.
+  const displayEntities = { ...entities, ...fieldsForActive };
+  const totalFields = Object.keys(displayEntities).length;
+  const missingCount = Object.values(displayEntities).filter(
     (v) => !v || String(v).toLowerCase() === "not available"
   ).length;
+
+  const addEntityField = () => {
+    const key = newFieldKey.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key || !activeDoc) return;
+    if (key in displayEntities) {
+      alert("A field with this name already exists.");
+      return;
+    }
+    setField(activeDoc.document_type, key, newFieldValue);
+    setNewFieldKey("");
+    setNewFieldValue("");
+  };
+
+  const removeEntityField = async (field) => {
+    if (!activeDoc) return;
+    if (!window.confirm(`Remove field "${titleCase(field)}"? This can't be undone.`)) return;
+
+    // Newly-added, not-yet-saved field: just drop it locally, no API call.
+    if (!(field in entities)) {
+      setEdited((prev) => {
+        const next = { ...(prev[activeDoc.document_type] || {}) };
+        delete next[field];
+        return { ...prev, [activeDoc.document_type]: next };
+      });
+      return;
+    }
+
+    setDeletingField(field);
+    try {
+      await deleteEntity(claimId, activeDoc.document_type, field);
+      setClaim((prev) => ({
+        ...prev,
+        documents: prev.documents.map((d) => {
+          if (d.document_type !== activeDoc.document_type) return d;
+          const nextEntities = { ...d.all_extracted_entities };
+          delete nextEntities[field];
+          return { ...d, all_extracted_entities: nextEntities };
+        }),
+      }));
+      setEdited((prev) => {
+        const next = { ...(prev[activeDoc.document_type] || {}) };
+        delete next[field];
+        return { ...prev, [activeDoc.document_type]: next };
+      });
+    } catch (err) {
+      alert(err?.message || "Could not remove field.");
+    } finally {
+      setDeletingField(null);
+    }
+  };
+
+  // ---- Tables: read/edit helpers ----
+  const savedTables = activeDoc?.all_extracted_tables || [];
+  const tablesForActive = editedTables[activeType] ?? savedTables;
+  const tablesDirty = editedTables[activeType] !== undefined;
+
+  const normalizedTable = (tbl) => ({
+    ...tbl,
+    headers: tbl.headers || (tbl.rows?.[0] ? Object.keys(tbl.rows[0]) : []),
+    rows: tbl.rows || [],
+  });
+
+  const mutateTables = (mutator) => {
+    if (!activeType) return;
+    const base = (editedTables[activeType] ?? savedTables).map(normalizedTable);
+    const next = mutator(base.map((t) => ({ ...t, rows: t.rows.map((r) => ({ ...r })) })));
+    setEditedTables((prev) => ({ ...prev, [activeType]: next }));
+    setTablesSaved(false);
+  };
+
+  const updateCell = (tableIndex, rowIndex, header, value) => {
+    mutateTables((tables) => {
+      tables[tableIndex].rows[rowIndex][header] = value;
+      return tables;
+    });
+  };
+
+  const addRow = (tableIndex) => {
+    mutateTables((tables) => {
+      const blankRow = {};
+      tables[tableIndex].headers.forEach((h) => (blankRow[h] = ""));
+      tables[tableIndex].rows.push(blankRow);
+      return tables;
+    });
+  };
+
+  const deleteRow = (tableIndex, rowIndex) => {
+    mutateTables((tables) => {
+      tables[tableIndex].rows.splice(rowIndex, 1);
+      return tables;
+    });
+  };
+
+  const addColumn = (tableIndex) => {
+    const name = window.prompt("New column name:");
+    if (!name) return;
+    const key = name.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key) return;
+    mutateTables((tables) => {
+      if (!tables[tableIndex].headers.includes(key)) {
+        tables[tableIndex].headers.push(key);
+      }
+      tables[tableIndex].rows.forEach((r) => {
+        if (!(key in r)) r[key] = "";
+      });
+      return tables;
+    });
+  };
+
+  const deleteColumn = (tableIndex, header) => {
+    mutateTables((tables) => {
+      tables[tableIndex].headers = tables[tableIndex].headers.filter((h) => h !== header);
+      tables[tableIndex].rows.forEach((r) => delete r[header]);
+      return tables;
+    });
+  };
+
+  const deleteTable = (tableIndex) => {
+    if (!window.confirm("Remove this entire table? This can't be undone.")) return;
+    mutateTables((tables) => {
+      tables.splice(tableIndex, 1);
+      return tables;
+    });
+  };
+
+  const addTable = () => {
+    const name = window.prompt("New table name:", "New Table");
+    if (!name) return;
+    const headersRaw = window.prompt(
+      "Column names, comma-separated (e.g. item, quantity, amount):",
+      "column_1"
+    );
+    if (!headersRaw) return;
+    const headers = headersRaw
+      .split(",")
+      .map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"))
+      .filter(Boolean);
+    if (headers.length === 0) return;
+    mutateTables((tables) => {
+      tables.push({ table_name: name, headers, rows: [] });
+      return tables;
+    });
+  };
+
+  const saveTables = async () => {
+    if (!activeDoc || !tablesDirty) return;
+    setTablesSaving(true);
+    try {
+      const payloadTables = tablesForActive;
+      await updateTables(claimId, activeDoc.document_type, payloadTables);
+      setClaim((prev) => ({
+        ...prev,
+        documents: prev.documents.map((d) =>
+          d.document_type === activeDoc.document_type
+            ? { ...d, all_extracted_tables: payloadTables }
+            : d
+        ),
+      }));
+      setEditedTables((prev) => {
+        const next = { ...prev };
+        delete next[activeType];
+        return next;
+      });
+      setTablesSaved(true);
+      setTimeout(() => setTablesSaved(false), 2500);
+    } catch (err) {
+      alert(err?.message || "Could not save table changes.");
+    } finally {
+      setTablesSaving(false);
+    }
+  };
 
   const saveEntities = async () => {
     if (!activeDoc || !hasChanges) return;
@@ -306,7 +496,7 @@ export default function DocumentDataPage() {
                   )}
                 </div>
                 <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-5 bg-white border border-ink/15 p-5 md:p-6">
-                  {Object.entries(entities).map(([field, value]) => {
+                  {Object.entries(displayEntities).map(([field, value]) => {
                     const current =
                       fieldsForActive[field] !== undefined
                         ? fieldsForActive[field]
@@ -314,13 +504,31 @@ export default function DocumentDataPage() {
                     const isMissing =
                       !value || String(value).toLowerCase() === "not available";
                     const isDirty = fieldsForActive[field] !== undefined;
+                    const isNew = !(field in entities);
                     return (
-                      <label key={field} className="block">
+                      <div key={field} className="block">
                         <span className="text-[11px] font-mono uppercase tracking-wide text-ink-soft/80 flex items-center gap-1.5 mb-1">
                           <span className="truncate">{titleCase(field)}</span>
-                          {isDirty && (
-                            <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-folder-dark" title="edited" />
+                          {isNew ? (
+                            <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500" title="new field" />
+                          ) : (
+                            isDirty && (
+                              <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-folder-dark" title="edited" />
+                            )
                           )}
+                          <button
+                            type="button"
+                            onClick={() => removeEntityField(field)}
+                            disabled={deletingField === field}
+                            title="Remove field"
+                            className="ml-auto shrink-0 text-ink-soft/50 hover:text-stamp-red disabled:opacity-40"
+                          >
+                            {deletingField === field ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={12} />
+                            )}
+                          </button>
                         </span>
                         <input
                           value={current ?? ""}
@@ -336,7 +544,7 @@ export default function DocumentDataPage() {
                               : "border-ink/15 bg-white"
                           }`}
                         />
-                      </label>
+                      </div>
                     );
                   })}
                   {totalFields === 0 && (
@@ -344,31 +552,121 @@ export default function DocumentDataPage() {
                       No fields were extracted for this document.
                     </p>
                   )}
+
+                  {/* Add a new field the OCR engine didn't extract */}
+                  <div className="sm:col-span-2 xl:col-span-3 flex flex-wrap items-end gap-2 pt-2 border-t border-ink/10 mt-1">
+                    <label className="block">
+                      <span className="text-[11px] font-mono uppercase tracking-wide text-ink-soft/80 block mb-1">
+                        Field name
+                      </span>
+                      <input
+                        value={newFieldKey}
+                        onChange={(e) => setNewFieldKey(e.target.value)}
+                        placeholder="e.g. discount_amount"
+                        className="border border-ink/15 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-folder-dark w-48"
+                      />
+                    </label>
+                    <label className="block flex-1 min-w-[160px]">
+                      <span className="text-[11px] font-mono uppercase tracking-wide text-ink-soft/80 block mb-1">
+                        Value
+                      </span>
+                      <input
+                        value={newFieldValue}
+                        onChange={(e) => setNewFieldValue(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && addEntityField()}
+                        className="border border-ink/15 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-folder-dark w-full"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={addEntityField}
+                      disabled={!newFieldKey.trim()}
+                      className="flex items-center gap-1.5 px-3 py-2 border border-ink/20 text-sm font-medium hover:bg-paper-dim disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Plus size={14} /> Add field
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* Tables */}
-              {(activeDoc.all_extracted_tables || []).length > 0 && (
-                <div>
-                  <p className="text-xs font-mono uppercase tracking-wide text-ink-soft mb-3 flex items-center gap-1.5">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-mono uppercase tracking-wide text-ink-soft flex items-center gap-1.5">
                     <Table2 size={13} />
-                    Extracted tables ({activeDoc.all_extracted_tables.length})
+                    Extracted tables ({tablesForActive.length})
                   </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={addTable}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-ink/20 text-xs font-medium hover:bg-paper-dim"
+                    >
+                      <Plus size={13} /> Add table
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveTables}
+                      disabled={!tablesDirty || tablesSaving}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-ink text-paper text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ink-soft transition-colors"
+                    >
+                      {tablesSaving ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : tablesSaved ? (
+                        <Check size={13} />
+                      ) : (
+                        <Save size={13} />
+                      )}
+                      {tablesSaved ? "Saved" : "Save tables"}
+                    </button>
+                  </div>
+                </div>
+
+                {tablesForActive.length === 0 ? (
+                  <p className="text-sm text-ink-soft italic bg-white border border-ink/15 p-5">
+                    No tables extracted for this document. Use "Add table" to create one manually.
+                  </p>
+                ) : (
                   <div className="space-y-6">
-                    {activeDoc.all_extracted_tables.map((tbl, ti) => {
+                    {tablesForActive.map((tbl, ti) => {
                       const headers =
                         tbl.headers ||
                         (tbl.rows?.[0] ? Object.keys(tbl.rows[0]) : []);
                       return (
-                        <div
-                          key={ti}
-                          className="border border-ink/15 bg-white"
-                        >
-                          <p className="px-4 py-3 text-sm font-medium text-ink border-b border-ink/10 bg-paper-dim/60">
-                            {tbl.table_name ||
-                              tbl.table_name_or_purpose ||
-                              `Table ${ti + 1}`}
-                          </p>
+                        <div key={ti} className="border border-ink/15 bg-white">
+                          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-ink/10 bg-paper-dim/60">
+                            <p className="text-sm font-medium text-ink truncate">
+                              {tbl.table_name ||
+                                tbl.table_name_or_purpose ||
+                                `Table ${ti + 1}`}
+                            </p>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => addColumn(ti)}
+                                className="text-[11px] font-mono uppercase text-ink-soft hover:text-ink flex items-center gap-1"
+                                title="Add column"
+                              >
+                                <Plus size={12} /> column
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => addRow(ti)}
+                                className="text-[11px] font-mono uppercase text-ink-soft hover:text-ink flex items-center gap-1"
+                                title="Add row"
+                              >
+                                <Plus size={12} /> row
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteTable(ti)}
+                                className="text-ink-soft/60 hover:text-stamp-red"
+                                title="Remove table"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
                           <div className="overflow-x-auto scroll-thin">
                             <table className="w-full text-xs min-w-[560px]">
                               <thead>
@@ -378,24 +676,56 @@ export default function DocumentDataPage() {
                                       key={h}
                                       className="text-left px-3 py-2 font-mono uppercase tracking-wide text-ink-soft whitespace-nowrap"
                                     >
-                                      {titleCase(h)}
+                                      <span className="inline-flex items-center gap-1.5">
+                                        {titleCase(h)}
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteColumn(ti, h)}
+                                          title="Remove column"
+                                          className="text-ink-soft/40 hover:text-stamp-red normal-case"
+                                        >
+                                          <X size={11} />
+                                        </button>
+                                      </span>
                                     </th>
                                   ))}
+                                  <th className="w-8" />
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-ink/10">
                                 {(tbl.rows || []).map((row, ri) => (
                                   <tr key={ri} className="even:bg-paper/40">
                                     {headers.map((h) => (
-                                      <td
-                                        key={h}
-                                        className="px-3 py-2 text-ink align-top"
-                                      >
-                                        {String(row[h] ?? "")}
+                                      <td key={h} className="px-1.5 py-1.5 text-ink align-top">
+                                        <input
+                                          value={row[h] ?? ""}
+                                          onChange={(e) => updateCell(ti, ri, h, e.target.value)}
+                                          className="w-full min-w-[90px] border border-transparent hover:border-ink/15 focus:border-folder-dark bg-transparent px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-folder-dark"
+                                        />
                                       </td>
                                     ))}
+                                    <td className="px-1.5 py-1.5 align-top">
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteRow(ti, ri)}
+                                        title="Remove row"
+                                        className="text-ink-soft/40 hover:text-stamp-red"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </td>
                                   </tr>
                                 ))}
+                                {(tbl.rows || []).length === 0 && (
+                                  <tr>
+                                    <td
+                                      colSpan={headers.length + 1}
+                                      className="px-3 py-3 text-ink-soft italic"
+                                    >
+                                      No rows yet — use "row" above to add one.
+                                    </td>
+                                  </tr>
+                                )}
                               </tbody>
                             </table>
                           </div>
@@ -403,7 +733,12 @@ export default function DocumentDataPage() {
                       );
                     })}
                   </div>
-                </div>
+                )}
+              </div>
+              {tablesDirty && (
+                <p className="text-[11px] font-mono text-folder-dark -mt-4">
+                  Unsaved table changes — click "Save tables" to persist them.
+                </p>
               )}
             </div>
           )}

@@ -36,6 +36,7 @@ from app.models.schemas import (
     DocumentSummary,
     Warnings,
     EntityUpdateRequest,
+    TablesUpdateRequest,
 )
 from app.utils import now_utc, to_object_id, serialize_doc
 
@@ -483,6 +484,82 @@ async def update_entity(
     updated = await documents_collection.find_one_and_update(
         {"_id": doc["_id"]},
         {"$set": update_fields},
+        return_document=True,
+    )
+    return _document_out_from_record(updated)
+
+
+@router.delete("/{document_type}/entities/{key}", response_model=DocumentOut)
+async def delete_entity(
+    claim_id: str,
+    document_type: str,
+    key: str,
+    source_file_name: Optional[str] = Query(default=None),
+    sequence: Optional[int] = Query(default=None),
+):
+    """Reviewer removes a field that shouldn't exist at all (e.g. the OCR
+    engine hallucinated a key, or a manually-added field was a mistake).
+    Uses $unset so the key disappears entirely rather than being set to an
+    empty string - keeps `Extracted fields (N)` count honest."""
+    query: dict = {"claim_id": claim_id, "document_type": document_type}
+    if source_file_name:
+        query["source_file_name"] = source_file_name
+    elif sequence is not None:
+        query["sequence"] = sequence
+
+    doc = await documents_collection.find_one(query, sort=[("updated_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this claim")
+
+    updated = await documents_collection.find_one_and_update(
+        {"_id": doc["_id"]},
+        {
+            "$unset": {
+                f"all_extracted_entities.{key}": "",
+                f"entity_verification.{key}": "",
+                f"entity_remarks.{key}": "",
+            },
+            "$set": {"updated_at": now_utc(), "review_status": "in_review"},
+        },
+        return_document=True,
+    )
+    return _document_out_from_record(updated)
+
+
+@router.put("/{document_type}/tables", response_model=DocumentOut)
+async def update_tables(
+    claim_id: str,
+    document_type: str,
+    payload: TablesUpdateRequest,
+    source_file_name: Optional[str] = Query(default=None),
+    sequence: Optional[int] = Query(default=None),
+):
+    """Reviewer adds/edits/removes tables, rows, columns, or individual
+    cells. Tables are dynamic in shape (headers differ per document), so
+    rather than patching individual cells server-side we accept the WHOLE
+    edited `all_extracted_tables` array from the frontend - which already
+    holds the current, in-progress edited state - and persist it as-is.
+    Same separation-of-concerns rule as entities: this only ever touches
+    all_extracted_tables, never the rest of the raw OCR payload."""
+    query: dict = {"claim_id": claim_id, "document_type": document_type}
+    if source_file_name:
+        query["source_file_name"] = source_file_name
+    elif sequence is not None:
+        query["sequence"] = sequence
+
+    doc = await documents_collection.find_one(query, sort=[("updated_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this claim")
+
+    updated = await documents_collection.find_one_and_update(
+        {"_id": doc["_id"]},
+        {
+            "$set": {
+                "all_extracted_tables": payload.tables,
+                "updated_at": now_utc(),
+                "review_status": "in_review",
+            }
+        },
         return_document=True,
     )
     return _document_out_from_record(updated)

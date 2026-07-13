@@ -177,3 +177,14 @@ class EntityUpdateRequest(BaseModel):
     value: Any
     verified: Optional[bool] = None
     remarks: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# 4b. Reviewer correction for tables (replace the WHOLE all_extracted_tables
+#     array in one shot). Tables are dynamic (headers differ per document),
+#     so instead of patching individual cells server-side, the frontend
+#     sends the full edited array it already has in memory and we persist it
+#     as-is - same "trust the caller's shape" approach as OCR ingestion.
+# ---------------------------------------------------------------------------
+class TablesUpdateRequest(BaseModel):
+    tables: List[Any]

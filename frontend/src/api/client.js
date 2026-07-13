@@ -68,4 +68,15 @@ export const updateEntities = async (claimId, documentType, changedFields) => {
   return results;
 };
 
+// Reviewer removes a field entirely (not just blanks it out).
+export const deleteEntity = (claimId, documentType, key) =>
+  api.delete(
+    `/claims/${claimId}/documents/${documentType}/entities/${encodeURIComponent(key)}`
+  );
+
+// Reviewer adds/edits/removes tables, rows, columns, or cells - sends the
+// whole edited tables array in one shot (tables are dynamic in shape).
+export const updateTables = (claimId, documentType, tables) =>
+  api.put(`/claims/${claimId}/documents/${documentType}/tables`, { tables });
+
 export const checkHealth = () => api.get("/health");
