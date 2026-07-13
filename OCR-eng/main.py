@@ -857,7 +857,6 @@ from project import config as pipeline_config
 # =========================================================
 # CONFIGURATION
 # =========================================================
-PDF_PATH = os.getenv("OCR_PDF_PATH", "TEST_PDF/MEDSAVE.pdf")
 TEST_MODE = os.getenv("OCR_TEST_MODE", "true").lower() in {"1", "true", "yes", "on"}
 MAX_OCR_PAGES = pipeline_config.MAX_OCR_PAGES
 MAX_PAGES = MAX_OCR_PAGES
@@ -869,7 +868,60 @@ CALLBACK_DOCUMENT_ID = os.getenv("OCR_DOCUMENT_ID") or os.getenv("DOCUMENT_ID")
 CALLBACK_CLAIM_ID = os.getenv("OCR_CLAIM_ID") or os.getenv("CLAIM_ID")
 CALLBACK_DOCUMENT_TYPE = os.getenv("OCR_DOCUMENT_TYPE") or os.getenv("DOCUMENT_TYPE") or "claim_pdf"
 CALLBACK_FILE_URL = os.getenv("OCR_FILE_URL") or os.getenv("FILE_URL")
+CALLBACK_SOURCE_FILE_URL = os.getenv("OCR_SOURCE_FILE_URL") or os.getenv("SOURCE_FILE_URL")
 CALLBACK_MIME_TYPE = os.getenv("OCR_MIME_TYPE") or os.getenv("MIME_TYPE")
+
+
+def _resolve_pdf_path() -> str:
+    """
+    Decide which PDF this run should actually process.
+
+    Priority:
+      1. OCR_PDF_PATH -> if it points to a file that already exists on disk,
+         use it as-is (useful for local/manual runs).
+      2. OCR_FILE_URL / OCR_SOURCE_FILE_URL -> download the file the backend
+         actually sent for this job into TEMP_DIR and use that.
+      3. Fallback -> the bundled TEST_PDF/MEDSAVE.pdf (local testing only).
+    """
+    configured_path = os.getenv("OCR_PDF_PATH")
+    if configured_path and os.path.isfile(configured_path):
+        print(f"[PDF SOURCE] Using local pdf_path: {configured_path}")
+        return configured_path
+
+    remote_url = CALLBACK_FILE_URL or CALLBACK_SOURCE_FILE_URL
+    if remote_url:
+        try:
+            os.makedirs(pipeline_config.TEMP_DIR, exist_ok=True)
+            run_tag = os.getenv("OCR_RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            downloaded_path = os.path.join(pipeline_config.TEMP_DIR, f"input_{run_tag}.pdf")
+            print(f"[PDF SOURCE] Downloading PDF from file_url: {remote_url}")
+            request = urllib_request.Request(remote_url, headers={"User-Agent": "claim-ocr-engine/1.0"})
+            with urllib_request.urlopen(request, timeout=120) as response, open(downloaded_path, "wb") as out_file:
+                out_file.write(response.read())
+            if os.path.getsize(downloaded_path) == 0:
+                raise ValueError("Downloaded file is empty")
+            print(f"[PDF SOURCE] Saved downloaded PDF to: {downloaded_path}")
+            return downloaded_path
+        except Exception as exc:
+            print(f"[PDF SOURCE] Failed to download from file_url ({remote_url}): {exc}")
+            if configured_path:
+                # configured_path was given but wasn't a valid local file and
+                # the download also failed - surface a clear error instead of
+                # silently falling back to the sample PDF.
+                raise FileNotFoundError(
+                    f"Could not resolve a PDF: pdf_path='{configured_path}' not found locally "
+                    f"and download from file_url='{remote_url}' failed: {exc}"
+                )
+            raise
+
+    if configured_path:
+        raise FileNotFoundError(f"pdf_path '{configured_path}' does not exist and no file_url was provided.")
+
+    print("[PDF SOURCE] No pdf_path/file_url provided - falling back to bundled TEST_PDF/MEDSAVE.pdf")
+    return "TEST_PDF/MEDSAVE.pdf"
+
+
+PDF_PATH = _resolve_pdf_path()
 # =========================================================
 # PDF NAME + OUTPUT PATHS
 # =========================================================
