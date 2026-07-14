@@ -833,6 +833,7 @@
 # =========================================================
 import os
 import sys
+import time
 import traceback
 import cv2
 import json
@@ -1083,35 +1084,67 @@ def _build_final_ocr_payload(processed_page_entries, total_page_count: int, ocr_
     final_payload["llm_json_errors"] = llm_json_errors
     final_payload["engine_output_raw"] = deepcopy(final_payload)
     return final_payload
+CALLBACK_MAX_ATTEMPTS = int(os.getenv("OCR_CALLBACK_MAX_ATTEMPTS", "4"))
+CALLBACK_BACKOFF_SECONDS = float(os.getenv("OCR_CALLBACK_BACKOFF_SECONDS", "3"))
+
+
 def _send_callback_payload(callback_url: str, payload: dict):
+    """POST/PATCH the OCR result to the backend, retrying transient failures
+    (network blips, timeouts, 5xx) with exponential backoff. A 4xx response
+    means the request itself is wrong (bad payload, auth, missing claim) -
+    retrying the same bytes won't help, so we don't burn attempts on it."""
     if not callback_url:
         return
     methods = [CALLBACK_METHOD or "PATCH"]
     if methods[0] != "POST":
         methods.append("POST")
     encoded_payload = json.dumps(payload, indent=4, ensure_ascii=False).encode("utf-8")
+
     last_error = None
-    for method in methods:
-        try:
-            request = urllib_request.Request(
-                callback_url,
-                data=encoded_payload,
-                headers={"Content-Type": "application/json"},
-                method=method,
-            )
-            with urllib_request.urlopen(request, timeout=120) as response:
-                response_text = response.read().decode("utf-8", errors="ignore")
-                print(f"? [CALLBACK] {method} {callback_url} returned HTTP {response.status}")
-                if response_text:
-                    print(f"? [CALLBACK] Response body: {response_text[:500]}")
-            return
-        except urllib_error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore") if exc.fp else ""
-            last_error = f"HTTP {exc.code}: {body or exc.reason}"
-            print(f"?? [CALLBACK] {method} failed: {last_error}")
-        except Exception as exc:
-            last_error = str(exc)
-            print(f"?? [CALLBACK] {method} failed: {last_error}")
+    for attempt in range(1, CALLBACK_MAX_ATTEMPTS + 1):
+        is_client_error = False
+        for method in methods:
+            try:
+                request = urllib_request.Request(
+                    callback_url,
+                    data=encoded_payload,
+                    headers={"Content-Type": "application/json"},
+                    method=method,
+                )
+                with urllib_request.urlopen(request, timeout=120) as response:
+                    response_text = response.read().decode("utf-8", errors="ignore")
+                    print(
+                        f"? [CALLBACK] {method} {callback_url} returned HTTP "
+                        f"{response.status} (attempt {attempt}/{CALLBACK_MAX_ATTEMPTS})"
+                    )
+                    if response_text:
+                        print(f"? [CALLBACK] Response body: {response_text[:500]}")
+                return
+            except urllib_error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="ignore") if exc.fp else ""
+                last_error = f"HTTP {exc.code}: {body or exc.reason}"
+                print(
+                    f"?? [CALLBACK] {method} failed (attempt {attempt}/"
+                    f"{CALLBACK_MAX_ATTEMPTS}): {last_error}"
+                )
+                if exc.code < 500:
+                    is_client_error = True
+            except Exception as exc:
+                last_error = str(exc)
+                print(
+                    f"?? [CALLBACK] {method} failed (attempt {attempt}/"
+                    f"{CALLBACK_MAX_ATTEMPTS}): {last_error}"
+                )
+
+        if is_client_error:
+            print("?? [CALLBACK] Not retrying - backend rejected the request (4xx).")
+            break
+
+        if attempt < CALLBACK_MAX_ATTEMPTS:
+            backoff = CALLBACK_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            print(f"? [CALLBACK] Retrying in {backoff:.0f}s...")
+            time.sleep(backoff)
+
     print(f"?? [CALLBACK] Unable to deliver OCR payload to backend: {last_error}")
 # =========================================================
 # STEP 1 ? PDF TO IMAGES
