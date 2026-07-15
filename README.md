@@ -22,9 +22,10 @@ Claim OCR is a three-part system for uploading claims PDFs, extracting OCR data,
 1. Start MongoDB.
 2. Configure the backend `.env` file.
 3. Configure the engine `.env` file with the Groq API key and callback settings.
-4. Start the backend API.
-5. Start the engine API.
-6. Start the frontend.
+4. Configure `frontend/.env` with `VITE_BACKEND_URL`.
+5. Start the backend API.
+6. Start the engine API.
+7. Start the frontend.
 
 ## Local Ports
 
@@ -142,5 +143,6 @@ npm run dev
 - `pdf2image` requires the system PDF conversion dependency stack to be installed.
 - If the frontend cannot reach the API, update the base URL from the settings modal and test the connection.
 - Large PDFs can be slow because the pipeline writes many intermediate artifacts under `engine/RESULT/`.
+
 
 

@@ -42,9 +42,9 @@ frontend/
 
 ## Environment Variables
 
-- No build-time environment variables are required by default.
-- The backend base URL is stored in browser `localStorage` under `claim_ocr_api_base_url`.
-- Use the settings modal in the UI to point the app at a different backend host.
+- Set `VITE_BACKEND_URL` in `frontend/.env` to point the app at a backend host before running the dev server.
+- The settings modal can still override the base URL at runtime via browser `localStorage` under `claim_ocr_api_base_url`.
+- `frontend/.env.example` documents the expected variable.
 
 ## Installation
 
@@ -104,3 +104,4 @@ npm run preview
 - The app is intentionally configurable at runtime so the backend host can change without rebuilding.
 - Review edits are kept in a local draft state until the user clicks save.
 - Keep the API contract in `src/api/client.js` synchronized with backend route changes.
+

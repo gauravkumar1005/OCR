@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { X, CheckCircle2, XCircle } from "lucide-react";
-import { getBaseUrl, setBaseUrl, checkHealth } from "../api/client.js";
+import { getBaseUrl, getDefaultBaseUrl, setBaseUrl, checkHealth } from "../api/client.js";
 
 export default function SettingsModal({ onClose }) {
   const [url, setUrl] = useState(getBaseUrl());
   const [status, setStatus] = useState(null); // null | "ok" | "fail" | "checking"
 
   const save = () => {
-    setBaseUrl(url || "http://localhost:8000");
+    setBaseUrl(url || getDefaultBaseUrl());
     onClose();
   };
 
@@ -82,3 +82,4 @@ export default function SettingsModal({ onClose }) {
     </div>
   );
 }
+

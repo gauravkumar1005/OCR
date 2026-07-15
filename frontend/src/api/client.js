@@ -1,12 +1,17 @@
 import axios from "axios";
 
 const STORAGE_KEY = "claim_ocr_api_base_url";
-const DEFAULT_BASE_URL = "http://localhost:8000";
+const DEFAULT_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL || "https://deploy-backend-wi3m.onrender.com";
 const ACCESS_TOKEN_KEY = "claim_ocr_access_token";
 const REFRESH_TOKEN_KEY = "claim_ocr_refresh_token";
 
 export function getBaseUrl() {
   return localStorage.getItem(STORAGE_KEY) || DEFAULT_BASE_URL;
+}
+
+export function getDefaultBaseUrl() {
+  return DEFAULT_BASE_URL;
 }
 
 export function setBaseUrl(url) {
@@ -181,3 +186,6 @@ export const updateTables = (claimId, documentType, tables) =>
   api.put(`/claims/${claimId}/documents/${documentType}/tables`, { tables });
 
 export const checkHealth = () => api.get("/health");
+
+
+
