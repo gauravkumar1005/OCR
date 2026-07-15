@@ -75,9 +75,9 @@ export default function Layout({ children }) {
           {user && (
             <p
               className="text-xs text-ink-soft font-mono truncate"
-              title={user.name || user.email}
+              title={user.email}
             >
-              {user.name || user.name || user.email}
+              {user.email}
             </p>
           )}
           <button

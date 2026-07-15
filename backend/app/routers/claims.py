@@ -20,7 +20,7 @@ import asyncio
 import json
 import logging
 import mimetypes
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import urlencode, urljoin
@@ -85,6 +85,16 @@ def _post_json(url: str, payload: dict, timeout: int = 60) -> tuple[int, str]:
     with urllib_request.urlopen(request, timeout=timeout) as response:
         response_text = response.read().decode("utf-8", errors="ignore")
         return response.status, response_text
+
+
+def _get_json(url: str, timeout: int = 15) -> dict:
+    request = urllib_request.Request(url, method="GET")
+    with urllib_request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", errors="ignore"))
+
+
+def _build_engine_status_url(run_id: str) -> str:
+    return urljoin(settings.OCR_ENGINE_URL.rstrip("/") + "/", f"status/{run_id}")
 
 
 def _document_out_from_record(doc: dict) -> DocumentOut:
@@ -256,9 +266,23 @@ async def _dispatch_ocr_job(
         if status_code not in {200, 201, 202}:
             raise RuntimeError(f"OCR engine returned HTTP {status_code}: {response_text}")
 
+        run_id = None
+        try:
+            run_id = (json.loads(response_text) or {}).get("run_id")
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(
+                "Could not parse run_id from engine response for claim=%s: %s",
+                claim_id,
+                response_text[:200] if response_text else "",
+            )
+
+        update_fields = {"status": "processing", "updated_at": now_utc()}
+        if run_id:
+            update_fields["ocr_run_id"] = run_id
+
         claim_result = await claims_collection.update_one(
             {"_id": to_object_id(claim_id)},
-            {"$set": {"status": "processing", "updated_at": now_utc()}},
+            {"$set": update_fields},
         )
         logger.info(
             "OCR job accepted for claim=%s matched=%s modified=%s response=%s",
@@ -423,6 +447,51 @@ async def get_claim_detail(claim_id: str):
         created_at=claim_s["created_at"],
         updated_at=claim_s["updated_at"],
     )
+
+
+@router.get("/{claim_id}/progress")
+async def get_claim_progress(claim_id: str) -> Dict[str, Any]:
+    """Live processing stage for a claim, proxied from the OCR engine.
+
+    The engine is internal-only (never called directly by the browser),
+    so the frontend polls this instead - we fetch the engine's current
+    stage for this claim's run_id and relay it as-is. Falls back to the
+    claim's stored status for claims that finished before this endpoint
+    existed (no ocr_run_id) or once the engine's run_id has aged out.
+    """
+    claim = await claims_collection.find_one({"_id": to_object_id(claim_id)})
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    claim_status = claim.get("status", "uploaded")
+    run_id = claim.get("ocr_run_id")
+
+    if claim_status in {"completed", "failed", "reviewed"} or not run_id:
+        return {
+            "claim_id": claim_id,
+            "stage": claim_status,
+            "stage_label": claim_status.replace("_", " ").title(),
+            "percent": 100 if claim_status in {"completed", "failed", "reviewed"} else 0,
+            "status": "completed" if claim_status == "completed" else claim_status,
+            "message": claim.get("ocr_error_message"),
+            "source": "claim_status",
+        }
+
+    try:
+        engine_status = await asyncio.to_thread(_get_json, _build_engine_status_url(run_id))
+        engine_status["source"] = "engine"
+        return engine_status
+    except Exception as exc:
+        logger.warning("Could not fetch engine progress for claim=%s run_id=%s: %s", claim_id, run_id, exc)
+        return {
+            "claim_id": claim_id,
+            "stage": claim_status,
+            "stage_label": claim_status.replace("_", " ").title(),
+            "percent": 0,
+            "status": claim_status,
+            "message": "Progress temporarily unavailable",
+            "source": "fallback",
+        }
 
 
 @router.patch("/{claim_id}/status")

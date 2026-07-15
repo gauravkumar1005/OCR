@@ -9,7 +9,7 @@ import {
   FileWarning,
   ArrowRight,
 } from "lucide-react";
-import { getClaim } from "../api/client.js";
+import { getClaim, getClaimProgress } from "../api/client.js";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 const TERMINAL = ["completed", "failed", "error"];
@@ -19,6 +19,7 @@ export default function StatusPage() {
   const navigate = useNavigate();
   const [claimIdInput, setClaimIdInput] = useState(routeClaimId || "");
   const [claim, setClaim] = useState(null);
+  const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(!!routeClaimId);
   const [error, setError] = useState("");
   const timerRef = useRef(null);
@@ -42,9 +43,21 @@ export default function StatusPage() {
     }
   };
 
+  const fetchProgress = async (id) => {
+    if (!id) return;
+    try {
+      const res = await getClaimProgress(id);
+      setProgress(res.data);
+    } catch {
+      // Progress is a nice-to-have overlay - if it fails, the document
+      // list below still shows real state, so fail silently here.
+    }
+  };
+
   useEffect(() => {
     if (!routeClaimId) return;
     fetchClaim(routeClaimId);
+    fetchProgress(routeClaimId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeClaimId]);
 
@@ -53,6 +66,7 @@ export default function StatusPage() {
     if (claim && !TERMINAL.includes((claim.status || "").toLowerCase())) {
       timerRef.current = setInterval(() => {
         fetchClaim(routeClaimId, true);
+        fetchProgress(routeClaimId);
       }, 3000);
     }
     return () => clearInterval(timerRef.current);
@@ -134,6 +148,21 @@ export default function StatusPage() {
               </div>
               <StatusBadge status={claim.status} />
             </div>
+
+            {progress &&
+              !TERMINAL.includes((claim.status || "").toLowerCase()) && (
+                <div className="mt-4 flex items-center gap-2 text-xs font-mono text-ink-soft bg-folder/40 border border-ink/10 px-3 py-2">
+                  <Loader2 size={13} className="animate-spin shrink-0" />
+                  <span className="truncate">
+                    {progress.stage_label || progress.stage || "Working…"}
+                  </span>
+                  {typeof progress.percent === "number" && (
+                    <span className="ml-auto shrink-0">
+                      {progress.percent}%
+                    </span>
+                  )}
+                </div>
+              )}
 
             <div className="mt-5">
               <div className="flex justify-between text-xs font-mono text-ink-soft mb-1.5">

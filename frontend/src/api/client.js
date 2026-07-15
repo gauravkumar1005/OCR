@@ -139,6 +139,12 @@ export const deleteClaim = (claimId) => api.delete(`/claims/${claimId}`);
 export const updateClaimStatus = (claimId, status) =>
   api.patch(`/claims/${claimId}/status`, { status });
 
+// Live pipeline stage for a claim, proxied from the OCR engine (see
+// backend's /claims/{claim_id}/progress - it never talks to the engine
+// from the browser directly).
+export const getClaimProgress = (claimId) =>
+  api.get(`/claims/${claimId}/progress`);
+
 // ---- Documents ----
 export const listDocuments = (claimId) =>
   api.get(`/claims/${claimId}/documents`);

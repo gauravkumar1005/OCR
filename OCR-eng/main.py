@@ -941,6 +941,40 @@ FOLDERS = {
     "merged": pipeline_config.MERGED_OUTPUT_DIR,
     "parsed": pipeline_config.PARSED_DIR,
 }
+
+# =========================================================
+# PROGRESS REPORTING
+# =========================================================
+# api.py (the long-lived FastAPI process) launches this file as a
+# subprocess per job and exposes GET /status/{run_id} by reading the file
+# this helper writes. File-based hand-off since the two processes don't
+# otherwise share memory.
+PROGRESS_DIR = Path(pipeline_config.BASE_DIR) / "runs"
+PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+PROGRESS_FILE = PROGRESS_DIR / f"{current_run_id}.json"
+
+
+def _write_progress(stage: str, stage_label: str, percent: int, status: str = "in_progress", message: str | None = None):
+    payload = {
+        "run_id": current_run_id,
+        "claim_id": CALLBACK_CLAIM_ID,
+        "document_id": CALLBACK_DOCUMENT_ID,
+        "document_type": CALLBACK_DOCUMENT_TYPE,
+        "stage": stage,
+        "stage_label": stage_label,
+        "percent": percent,
+        "status": status,
+        "message": message,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        PROGRESS_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        print(f"?? [PROGRESS] Failed to write progress file: {exc}")
+
+
+_write_progress("converting_pdf", "Converting PDF to images", 10)
+
 def _load_json_if_exists(file_path: Path):
     if not file_path.exists():
         return None
@@ -1174,12 +1208,24 @@ image_paths = all_image_paths
 # =========================================================
 processed_pages = []
 analyzer = LayoutAwareQualityAnalyzer()
+_write_progress(
+    "processing_pages",
+    f"Processing pages (0/{len(image_paths)})",
+    20,
+)
 for idx, image_path in enumerate(image_paths):
     page_no = idx + 1
     page_name = os.path.splitext(os.path.basename(image_path))[0]
     print("\n" + "=" * 70)
     print(f"PROCESSING PAGE {page_no}")
     print("=" * 70)
+    # Preprocessing -> layout detection -> OCR all happen for this page
+    # below; percent climbs from 20% to 70% across all pages combined.
+    _write_progress(
+        "processing_pages",
+        f"Processing page {page_no}/{len(image_paths)} (preprocess, layout, OCR)",
+        20 + int(50 * idx / max(len(image_paths), 1)),
+    )
     try:
         # =============================================
         # STEP 2 ? PREPROCESS
@@ -1339,6 +1385,7 @@ print("\n?? Individual page extraction and classification loop completed success
 # ==========================================================================
 # STEP 9 ? LOGICAL DOCUMENT MERGER ENGINE (OUTSIDE THE LOOP)
 # ==========================================================================
+_write_progress("classifying_documents", "Grouping pages into documents", 72)
 print("\n" + "=" * 80)
 print("STEP 9 ? RUNNING PRODUCTION LOGICAL DOCUMENT MERGER")
 print("=" * 80)
@@ -1384,6 +1431,7 @@ elif not merger_result:
     pipeline_error_message = "Merger returned empty output matrices."
     print("Skipping LLM because merger failed or no merged documents found")
 else:
+    _write_progress("extracting_entities", "Extracting entities with LLM", 85)
     print("\n" + "=" * 80)
     print("STEP 10 ? RUNNING HIGH-DENSITY COGNITIVE LLM PASS")
     print("=" * 80)
@@ -1396,6 +1444,7 @@ else:
         pipeline_error_message = str(pipeline_error)
         warnings.append({"stage": "llm_parser", "message": pipeline_error_message})
         print(f"\n? Error encountered during text restructuring stage: {pipeline_error}")
+_write_progress("finalizing", "Building final OCR payload", 95)
 final_ocr_payload = _build_final_ocr_payload(
     processed_page_entries=processed_pages,
     total_page_count=total_pages,
@@ -1416,5 +1465,12 @@ print(f"? current_result_dir: {current_result_dir}")
 if CALLBACK_URL:
     print(f"? Dispatching final OCR payload to callback: {CALLBACK_URL}")
     _send_callback_payload(CALLBACK_URL, final_ocr_payload)
+_write_progress(
+    "completed",
+    "Completed",
+    100,
+    status="completed" if ocr_status == "completed" else "failed",
+    message=pipeline_error_message or merger_error_message,
+)
 print("=" * 80)
 print("\nPipeline stopped successfully after Full Page OCR.")
