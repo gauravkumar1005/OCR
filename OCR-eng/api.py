@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -275,3 +276,90 @@ async def get_status(run_id: str) -> Dict[str, Any]:
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
     return {"status": "ok", "engine": "claim-ocr"}
+
+
+# ---------------------------------------------------------------------------
+# BACKGROUND CLEANUP
+# ---------------------------------------------------------------------------
+# Every job writes a full RESULT/<run>/ folder (images, OCR json, layout
+# crops, merged output...) plus a runs/<run_id>.json progress file, and
+# temp/ can accumulate downloaded source PDFs. None of this was ever
+# deleted, so disk usage only ever grows. This sweep periodically removes
+# anything older than the retention window - safe to disable by setting
+# OCR_CLEANUP_RETENTION_DAYS=0.
+CLEANUP_INTERVAL_SECONDS = int(os.getenv("OCR_CLEANUP_INTERVAL_SECONDS", str(6 * 3600)))
+CLEANUP_RETENTION_DAYS = float(os.getenv("OCR_CLEANUP_RETENTION_DAYS", "7"))
+
+
+def _delete_if_older_than(path: Path, cutoff_ts: float) -> bool:
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    if mtime >= cutoff_ts:
+        return False
+    try:
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+        return True
+    except Exception as exc:
+        print(f"[CLEANUP] Could not remove {path}: {exc}")
+        return False
+
+
+def run_cleanup_once(retention_days: float | None = None) -> int:
+    """Deletes RESULT/<run>/ folders, runs/<run_id>.json progress files,
+    and temp/ contents older than the retention window. Returns the
+    number of items removed. Exposed as a plain function (not just the
+    background loop) so it's easy to call directly, e.g. from tests or a
+    one-off `python -c "from api import run_cleanup_once; run_cleanup_once()"`."""
+    days = CLEANUP_RETENTION_DAYS if retention_days is None else retention_days
+    if days <= 0:
+        return 0
+
+    cutoff_ts = time.time() - days * 86400
+    deleted = 0
+
+    result_dir = ENGINE_ROOT / "RESULT"
+    if result_dir.exists():
+        for child in result_dir.iterdir():
+            if _delete_if_older_than(child, cutoff_ts):
+                deleted += 1
+
+    if PROGRESS_DIR.exists():
+        for child in PROGRESS_DIR.glob("*.json"):
+            if _delete_if_older_than(child, cutoff_ts):
+                deleted += 1
+
+    temp_dir = ENGINE_ROOT / "temp"
+    if temp_dir.exists():
+        for child in temp_dir.iterdir():
+            if _delete_if_older_than(child, cutoff_ts):
+                deleted += 1
+
+    if deleted:
+        print(f"[CLEANUP] Removed {deleted} item(s) older than {days} day(s)")
+    return deleted
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_cleanup_once)
+        except Exception as exc:
+            print(f"[CLEANUP] Sweep failed: {exc}")
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def _start_background_cleanup() -> None:
+    if CLEANUP_RETENTION_DAYS > 0:
+        asyncio.create_task(_cleanup_loop())
+        print(
+            f"[CLEANUP] Background sweep enabled - retention="
+            f"{CLEANUP_RETENTION_DAYS}d, interval={CLEANUP_INTERVAL_SECONDS}s"
+        )
+    else:
+        print("[CLEANUP] Disabled (OCR_CLEANUP_RETENTION_DAYS<=0)")

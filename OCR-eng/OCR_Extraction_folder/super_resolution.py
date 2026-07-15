@@ -61,6 +61,26 @@ def detect_blur(image):
 # =========================================================
 
 def apply_super_resolution(image_path, output_folder):
+    """Public entry point. Uses the persistent model server if configured
+    and reachable (see model_client.py) so the EDSR model doesn't have to
+    be reloaded from disk for every job - falls back to loading it in
+    this process otherwise."""
+    from model_client import call_model_server, is_model_server_configured
+
+    if is_model_server_configured():
+        try:
+            result = call_model_server(
+                "superres/enhance",
+                {"image_path": image_path, "output_folder": output_folder},
+            )
+            return result["output_path"]
+        except Exception:
+            pass  # already logged inside call_model_server; fall through to local
+
+    return _apply_super_resolution_local(image_path, output_folder)
+
+
+def _apply_super_resolution_local(image_path, output_folder):
 
     os.makedirs(output_folder, exist_ok=True)
 

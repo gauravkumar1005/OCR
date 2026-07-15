@@ -783,6 +783,45 @@ def detect_layout(
     conf_threshold=0.35,
     imgsz=1024
 ):
+    """Public entry point. Uses the persistent model server if configured
+    and reachable (see model_client.py) so the YOLO model doesn't have to
+    be reloaded from disk for every job - falls back to loading it in
+    this process otherwise. Same result either way: both paths run the
+    exact same detection logic in _detect_layout_local, just in whichever
+    process happens to have the model warm."""
+    from model_client import call_model_server, is_model_server_configured
+
+    if is_model_server_configured():
+        try:
+            return call_model_server(
+                "layout/detect",
+                {
+                    "image_path": image_path,
+                    "layout_output_folder": layout_output_folder,
+                    "cropped_output_folder": cropped_output_folder,
+                    "conf_threshold": conf_threshold,
+                    "imgsz": imgsz,
+                },
+            )
+        except Exception:
+            pass  # already logged inside call_model_server; fall through to local
+
+    return _detect_layout_local(
+        image_path,
+        layout_output_folder,
+        cropped_output_folder,
+        conf_threshold=conf_threshold,
+        imgsz=imgsz,
+    )
+
+
+def _detect_layout_local(
+    image_path,
+    layout_output_folder,
+    cropped_output_folder,
+    conf_threshold=0.35,
+    imgsz=1024
+):
 
     os.makedirs(layout_output_folder, exist_ok=True)
     os.makedirs(cropped_output_folder, exist_ok=True)

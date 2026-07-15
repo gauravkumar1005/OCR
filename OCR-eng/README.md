@@ -123,3 +123,42 @@ The batch pipeline writes a staged directory tree similar to:
 - `main.py` is the authoritative pipeline entrypoint; `api.py` only launches it.
 - Do not hardcode secrets in the engine source. Use environment variables only.
 
+## Optional: persistent model server (performance)
+
+Every OCR job runs `main.py` as a brand-new subprocess, so the YOLO
+layout-detection model and the EDSR super-resolution model get reloaded
+from disk every single time - the module-level caches in
+`layout_block_detection.py` / `super_resolution.py` never help, because a
+fresh subprocess means a fresh interpreter.
+
+`model_server.py` is an optional, separate long-lived process that loads
+both models ONCE and keeps them warm. Run it alongside `api.py`:
+
+```
+python model_server.py
+```
+
+Then set in `.env` (read by both `api.py` and the `main.py` subprocess it launches):
+
+```
+OCR_MODEL_SERVER_URL=http://localhost:9100
+```
+
+If this isn't set, or the server isn't reachable, everything falls back
+to the old per-job loading behavior automatically - this is purely
+optional and safe to skip.
+
+## Background cleanup
+
+`api.py` runs a periodic sweep (default: every 6 hours) that deletes
+`RESULT/<run>/` folders, `runs/<run_id>.json` progress files, and `temp/`
+contents older than the retention window (default: 7 days). Configure
+via `.env`:
+
+```
+OCR_CLEANUP_RETENTION_DAYS=7
+OCR_CLEANUP_INTERVAL_SECONDS=21600
+```
+
+Set `OCR_CLEANUP_RETENTION_DAYS=0` to disable it entirely.
+
