@@ -144,6 +144,11 @@ export const deleteClaim = (claimId) => api.delete(`/claims/${claimId}`);
 export const updateClaimStatus = (claimId, status) =>
   api.patch(`/claims/${claimId}/status`, { status });
 
+// Re-dispatches OCR for a failed/interrupted claim. If the engine still has
+// a checkpointed run for this claim, it resumes from wherever processing
+// broke off instead of starting the PDF over from page 1.
+export const retryClaim = (claimId) => api.post(`/claims/${claimId}/retry`);
+
 // Live pipeline stage for a claim, proxied from the OCR engine (see
 // backend's /claims/{claim_id}/progress - it never talks to the engine
 // from the browser directly).

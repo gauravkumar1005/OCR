@@ -88,6 +88,17 @@ class OcrEngineDispatchRequest(BaseModel):
     file_url: str
     mime_type: str
     callback_url: str
+    # Present only on a retry: tells the engine to resume the SAME run_id
+    # (and therefore its on-disk checkpoints) instead of starting the PDF
+    # over from page 1. See routers/claims.py::_dispatch_ocr_job.
+    resume_run_id: Optional[str] = None
+
+
+class ClaimRetryResponse(BaseModel):
+    claim_id: str
+    status: str
+    resumed: bool
+    ocr_run_id: Optional[str] = None
 
 
 class OcrEngineCallbackRequest(BaseModel):

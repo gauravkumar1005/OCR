@@ -9,7 +9,7 @@ import {
   FileWarning,
   ArrowRight,
 } from "lucide-react";
-import { getClaim, getClaimProgress } from "../api/client.js";
+import { getClaim, getClaimProgress, retryClaim } from "../api/client.js";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 const TERMINAL = ["completed", "failed", "error"];
@@ -22,6 +22,7 @@ export default function StatusPage() {
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(!!routeClaimId);
   const [error, setError] = useState("");
+  const [retrying, setRetrying] = useState(false);
   const timerRef = useRef(null);
 
   const fetchClaim = async (id, silent = false) => {
@@ -76,6 +77,26 @@ export default function StatusPage() {
   const goToClaim = (e) => {
     e.preventDefault();
     if (claimIdInput.trim()) navigate(`/status/${claimIdInput.trim()}`);
+  };
+
+  const handleRetry = async () => {
+    if (!routeClaimId || retrying) return;
+    setRetrying(true);
+    setError("");
+    try {
+      await retryClaim(routeClaimId);
+      // Pipeline continues from its last checkpoint on the engine side -
+      // just refresh so the poller below picks up "processing" and starts
+      // ticking again.
+      await fetchClaim(routeClaimId);
+      await fetchProgress(routeClaimId);
+    } catch (err) {
+      setError(
+        err?.response?.data?.detail || err?.message || "Could not retry this claim."
+      );
+    } finally {
+      setRetrying(false);
+    }
   };
 
   const docs = claim?.documents || [];
@@ -189,6 +210,23 @@ export default function StatusPage() {
               >
                 Review extracted documents <ArrowRight size={14} />
               </button>
+            )}
+
+            {claim.status?.toLowerCase() === "failed" && (
+              <div className="mt-5">
+                <button
+                  onClick={handleRetry}
+                  disabled={retrying}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-ink text-paper text-sm font-medium hover:bg-ink-soft transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={retrying ? "animate-spin" : ""} />
+                  {retrying ? "Resuming…" : "Retry from where it stopped"}
+                </button>
+                <p className="text-xs text-ink-soft mt-2">
+                  Continues from the last completed page/step instead of
+                  re-scanning the whole document.
+                </p>
+              </div>
             )}
           </div>
 

@@ -377,6 +377,34 @@ async def ingest_ocr_callback(claim_id: str, payload: OcrEngineCallbackRequest):
 
             updated = await _upsert_document(claim_id, doc_record, source_file_name)
             saved_ids.append(updated["_id"])
+
+        # Once the engine has produced REAL classified sub-documents for
+        # this claim (insurance_form, invoice, discharge_summary, ...),
+        # drop any leftover row still sitting under the generic top-level
+        # placeholder type (e.g. "claim_pdf") - it was either an early
+        # in-progress marker never finalized, or a stale row left behind
+        # by a previous failed attempt that a retry reset to "processing"
+        # (see routers/claims.py::retry_claim). The engine never
+        # legitimately classifies a page AS that generic wrapper type, so
+        # it's always safe to remove here - without this it lingers
+        # forever showing "processing" next to the real, completed
+        # documents and inflates document_count (e.g. "5/6 documents
+        # scanned" instead of "5/5").
+        placeholder_type = payload.document_type or "claim_pdf"
+        stale_result = await documents_collection.delete_many(
+            {
+                "claim_id": claim_id,
+                "document_type": placeholder_type,
+                "_id": {"$nin": saved_ids},
+            }
+        )
+        if stale_result.deleted_count:
+            logger.info(
+                "Removed %s stale placeholder document(s) type=%s for claim=%s after real classification",
+                stale_result.deleted_count,
+                placeholder_type,
+                claim_id,
+            )
     else:
         document_type = payload.document_type or "claim_pdf"
         existing = await documents_collection.find_one(

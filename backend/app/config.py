@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # down with get_current_user. Override via .env in production.
     OCR_CALLBACK_SECRET: str = "change-this-ocr-callback-secret"
 
+    # If a claim has been "processing" for longer than this with no reply
+    # from the OCR engine at all (engine service unreachable - e.g. the
+    # whole engine process was killed, not just the PDF job, so even the
+    # crash-supervisor never got to fire its failure callback), we treat
+    # the job as dead and flip the claim to "failed" ourselves so it can
+    # be retried instead of staying stuck at "processing" forever.
+    OCR_STALE_SECONDS: int = 180
+
     class Config:
         env_file = ".env"
 

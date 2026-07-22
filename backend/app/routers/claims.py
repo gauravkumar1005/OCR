@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+from datetime import timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -35,6 +36,7 @@ from app.models.schemas import (
     ClaimCreateRequest,
     ClaimResponse,
     ClaimDetailResponse,
+    ClaimRetryResponse,
     DocumentOut,
     OcrEngineDispatchRequest,
     Warnings,
@@ -240,6 +242,7 @@ async def _dispatch_ocr_job(
     document_type: str,
     file_url: str,
     mime_type: str,
+    resume_run_id: Optional[str] = None,
 ) -> None:
     callback_url = _build_callback_url(claim_id)
     dispatch_url = _build_engine_dispatch_url()
@@ -250,15 +253,17 @@ async def _dispatch_ocr_job(
         file_url=file_url,
         mime_type=mime_type,
         callback_url=callback_url,
+        resume_run_id=resume_run_id,
     ).model_dump()
 
     logger.info(
-        "Dispatching OCR job for claim=%s document=%s type=%s engine=%s callback=%s",
+        "Dispatching OCR job for claim=%s document=%s type=%s engine=%s callback=%s resume_run_id=%s",
         claim_id,
         document_id,
         document_type,
         dispatch_url,
         callback_url,
+        resume_run_id,
     )
 
     try:
@@ -449,6 +454,35 @@ async def get_claim_detail(claim_id: str):
     )
 
 
+async def _mark_claim_dead(claim_id: str, claim: dict, reason: str) -> Dict[str, Any]:
+    """Called when a 'processing' claim's engine can't be reached at all
+    (the whole engine service is down, not just its PDF subprocess - in
+    that case even the crash-supervisor never runs, so no failure callback
+    is ever coming). We flip the claim AND its documents to 'failed'
+    ourselves so the claim stops being silently stuck and becomes
+    retryable again (POST /claims/{claim_id}/retry will resume it from
+    its last checkpoint via the stored ocr_run_id)."""
+    now = now_utc()
+    await claims_collection.update_one(
+        {"_id": to_object_id(claim_id)},
+        {"$set": {"status": "failed", "updated_at": now, "ocr_error_message": reason}},
+    )
+    await documents_collection.update_many(
+        {"claim_id": claim_id, "ocr_status": {"$nin": ["completed"]}},
+        {"$set": {"ocr_status": "failed", "mapping_status": "failed", "updated_at": now}},
+    )
+    logger.warning("Claim=%s marked failed: %s", claim_id, reason)
+    return {
+        "claim_id": claim_id,
+        "stage": "failed",
+        "stage_label": "Failed",
+        "percent": 0,
+        "status": "failed",
+        "message": reason,
+        "source": "stale_detection",
+    }
+
+
 @router.get("/{claim_id}/progress")
 async def get_claim_progress(claim_id: str) -> Dict[str, Any]:
     """Live processing stage for a claim, proxied from the OCR engine.
@@ -483,6 +517,25 @@ async def get_claim_progress(claim_id: str) -> Dict[str, Any]:
         return engine_status
     except Exception as exc:
         logger.warning("Could not fetch engine progress for claim=%s run_id=%s: %s", claim_id, run_id, exc)
+
+        last_update = claim.get("updated_at")
+        if last_update and last_update.tzinfo is None:
+            # Motor/pymongo returns naive datetimes (UTC, since that's all
+            # BSON stores) - now_utc() is tz-aware, so normalize before
+            # subtracting or this raises TypeError.
+            last_update = last_update.replace(tzinfo=timezone.utc)
+        is_stale = bool(last_update) and (now_utc() - last_update) > timedelta(seconds=settings.OCR_STALE_SECONDS)
+        if is_stale:
+            return await _mark_claim_dead(
+                claim_id,
+                claim,
+                reason=(
+                    "OCR engine became unreachable while this claim was processing "
+                    f"(no response for over {settings.OCR_STALE_SECONDS}s) - the job "
+                    "appears to have stopped. You can retry it."
+                ),
+            )
+
         return {
             "claim_id": claim_id,
             "stage": claim_status,
@@ -492,6 +545,82 @@ async def get_claim_progress(claim_id: str) -> Dict[str, Any]:
             "message": "Progress temporarily unavailable",
             "source": "fallback",
         }
+
+
+@router.post("/{claim_id}/retry", response_model=ClaimRetryResponse)
+async def retry_claim(claim_id: str, background_tasks: BackgroundTasks):
+    """
+    Re-dispatch OCR processing for a claim that failed or got interrupted
+    partway through (engine crash, process killed, network blip, server
+    restart, etc.) - WITHOUT starting the pipeline over from page 1.
+
+    If the claim already has an `ocr_run_id` from its previous attempt, we
+    pass it back to the engine as `resume_run_id`. The engine reuses that
+    same run_id (see OCR-eng/api.py::_launch_job), which resolves to the
+    exact same RESULT/<job>/<run_id>/ checkpoint folder the previous
+    attempt was writing into - main.py then skips every page/stage it
+    already completed (see OCR_RESUME handling in OCR-eng/main.py) and
+    only continues the remaining work. Claims that never even got a
+    run_id (engine was unreachable before the job was accepted) simply
+    start a fresh run, same as the very first attempt.
+    """
+    claim = await claims_collection.find_one({"_id": to_object_id(claim_id)})
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    claim_status = claim.get("status", "uploaded")
+    if claim_status not in {"failed", "uploaded"}:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Claim status is '{claim_status}' - only claims that are "
+                "'failed' (or never successfully dispatched) can be retried."
+            ),
+        )
+
+    resume_run_id = claim.get("ocr_run_id")
+    document_type = claim.get("document_type") or DEFAULT_DOCUMENT_TYPE
+    dispatch_mime_type = _guess_mime_type(claim.get("source_file_url", ""), claim.get("mime_type"))
+
+    now = now_utc()
+    await claims_collection.update_one(
+        {"_id": to_object_id(claim_id)},
+        {"$set": {"status": "processing", "updated_at": now, "ocr_error_message": None}},
+    )
+    # Clear stale "failed" badges on this claim's document rows so the UI
+    # doesn't show "processing" at the top and "failed" underneath at the
+    # same time while the resumed job re-checks/finishes those documents.
+    # Documents that already fully succeeded (ocr_status="completed") are
+    # left alone - the engine's checkpoint will skip re-processing them
+    # anyway, so there's nothing to reset.
+    await documents_collection.update_many(
+        {"claim_id": claim_id, "ocr_status": {"$ne": "completed"}},
+        {"$set": {"ocr_status": "processing", "mapping_status": "processing", "updated_at": now}},
+    )
+
+    background_tasks.add_task(
+        _dispatch_ocr_job,
+        claim_id,
+        claim_id,
+        document_type,
+        claim["source_file_url"],
+        dispatch_mime_type,
+        resume_run_id,
+    )
+
+    logger.info(
+        "Retry requested for claim=%s resume_run_id=%s (resuming=%s)",
+        claim_id,
+        resume_run_id,
+        bool(resume_run_id),
+    )
+
+    return ClaimRetryResponse(
+        claim_id=claim_id,
+        status="processing",
+        resumed=bool(resume_run_id),
+        ocr_run_id=resume_run_id,
+    )
 
 
 @router.patch("/{claim_id}/status")

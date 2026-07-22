@@ -861,6 +861,19 @@ from project import config as pipeline_config
 TEST_MODE = os.getenv("OCR_TEST_MODE", "true").lower() in {"1", "true", "yes", "on"}
 MAX_OCR_PAGES = pipeline_config.MAX_OCR_PAGES
 MAX_PAGES = MAX_OCR_PAGES
+# =========================================================
+# RESUME / CHECKPOINT SUPPORT
+# =========================================================
+# When api.py relaunches a job with the SAME run_id (a retry after a
+# crash/interrupt), OCR_RESUME=true is set and pipeline_config.RUN_ID
+# resolves to that same run_id -> CURRENT_RESULT_DIR is the exact same
+# RESULT/<job_scope>/<run_id>/ folder the previous attempt was writing
+# into. Every stage below checks that folder for already-completed work
+# (per page: layout+ocr+classification json; per pipeline: converted
+# images; LLM stage: parser's own per-document skip) before redoing it,
+# so a retry continues from wherever it broke off instead of starting
+# the whole PDF over from page 1.
+IS_RESUME = os.getenv("OCR_RESUME", "false").lower() in {"1", "true", "yes", "on"}
 ENABLE_FULL_PAGE_OCR = True
 ENABLE_LAYOUT_DETECTION = True
 CALLBACK_URL = os.getenv("OCR_CALLBACK_URL") or os.getenv("CALLBACK_URL")
@@ -1192,11 +1205,25 @@ else:
 page_limit_setting = "ALL" if MAX_OCR_PAGES is None else MAX_OCR_PAGES
 print(f"? total_pages detected: {total_pages}")
 print(f"? max_pages setting: {page_limit_setting}")
-all_image_paths = convert_pdf_to_images(
-    pdf_path=PDF_PATH,
-    output_folder=FOLDERS["images"],
-    max_pages=MAX_OCR_PAGES,
-)
+expected_conversion_count = total_pages if MAX_OCR_PAGES is None else min(total_pages, MAX_OCR_PAGES)
+existing_images = []
+if IS_RESUME and expected_conversion_count:
+    for page_no_check in range(1, expected_conversion_count + 1):
+        candidate = Path(FOLDERS["images"]) / f"page_{page_no_check}.png"
+        if not candidate.exists():
+            existing_images = []
+            break
+        existing_images.append(str(candidate))
+
+if existing_images:
+    print(f"[RESUME] Found {len(existing_images)} already-converted page image(s) - skipping PDF->image conversion.")
+    all_image_paths = existing_images
+else:
+    all_image_paths = convert_pdf_to_images(
+        pdf_path=PDF_PATH,
+        output_folder=FOLDERS["images"],
+        max_pages=MAX_OCR_PAGES,
+    )
 converted_page_count = len(all_image_paths)
 print(f"? converted_page_count: {converted_page_count}")
 
@@ -1219,6 +1246,43 @@ for idx, image_path in enumerate(image_paths):
     print("\n" + "=" * 70)
     print(f"PROCESSING PAGE {page_no}")
     print("=" * 70)
+
+    # ---------------------------------------------------------------
+    # RESUME CHECKPOINT: if this exact page was already fully OCR'd and
+    # classified in a previous (interrupted) attempt at this run_id, its
+    # classification json will already be on disk - reuse it instead of
+    # re-running preprocessing/layout/OCR/vision-LLM for the page again.
+    # A page only counts as "done" if its classification json has no
+    # recorded error (a page that crashed mid-way, e.g. before the
+    # classification file was written, is correctly retried below).
+    # ---------------------------------------------------------------
+    checkpoint_classification_file = Path(FOLDERS["classification"]) / f"page_{page_no}.json"
+    if IS_RESUME:
+        cached_classification = _load_json_if_exists(checkpoint_classification_file)
+        if cached_classification is not None and "error" not in cached_classification:
+            print(f"[RESUME] Page {page_no} already processed in a prior attempt - skipping re-processing.")
+            page_ocr_json = _load_json_if_exists(Path(FOLDERS["ocr"]) / f"{page_name}_ocr.json")
+            page_layout_json = _load_json_if_exists(Path(FOLDERS["layout"]) / f"{page_name}_layout.json")
+            cached_raw_text_path = Path(FOLDERS["ocr"]) / f"{page_name}_raw.txt"
+            cached_raw_text = (
+                cached_raw_text_path.read_text(encoding="utf-8") if cached_raw_text_path.exists() else ""
+            )
+            processed_pages.append(
+                {
+                    "page_number": page_no,
+                    "raw_text": cached_raw_text,
+                    "classification": cached_classification,
+                    "ocr_json": page_ocr_json,
+                    "layout_json": page_layout_json,
+                }
+            )
+            _write_progress(
+                "processing_pages",
+                f"Processing page {page_no}/{len(image_paths)} (resumed from checkpoint)",
+                20 + int(50 * idx / max(len(image_paths), 1)),
+            )
+            continue
+
     # Preprocessing -> layout detection -> OCR all happen for this page
     # below; percent climbs from 20% to 70% across all pages combined.
     _write_progress(
@@ -1437,7 +1501,14 @@ else:
     print("=" * 80)
     try:
         llm_ran = True
-        parser.run_extraction_pipeline(force_reprocess_active=True)
+        # On a fresh run we want every merged document re-parsed (force=True).
+        # On a resumed run we WANT parser.py's own "already processed,
+        # skipping" checkpoint logic (see project/parser.py::
+        # run_extraction_pipeline) to kick in, so merged documents whose
+        # LLM json was already produced before the interruption aren't
+        # sent to the LLM a second time - only the ones still missing get
+        # processed now.
+        parser.run_extraction_pipeline(force_reprocess_active=not IS_RESUME)
         print("\n? Success: Enterprise Universal Healthcare IDP Platform execution finalized completely.")
     except Exception as pipeline_error:
         mapping_status = "partial" if processed_pages else "failed"

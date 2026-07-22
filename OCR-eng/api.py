@@ -44,6 +44,12 @@ class OCRJobRequest(BaseModel):
     source_file_url: Optional[str] = None
     max_pages: Optional[int] = None
     test_mode: Optional[bool] = None
+    # If set, reuse this run_id (and therefore the same RESULT/<job>/<run_id>/
+    # checkpoint folder from a prior attempt) instead of generating a fresh
+    # one, and tell main.py to skip stages it already completed. Set by the
+    # backend's retry endpoint when re-dispatching a claim that previously
+    # failed/was interrupted partway through.
+    resume_run_id: Optional[str] = None
 
 
 class OCRJobResponse(BaseModel):
@@ -178,11 +184,18 @@ def _utc_now_iso() -> str:
 
 
 def _launch_job(payload: OCRJobRequest) -> tuple[int, str]:
-    run_id = uuid.uuid4().hex
+    # A resume request reuses the SAME run_id as the attempt it's resuming,
+    # so main.py resolves to the same RESULT/<job>/<run_id>/ folder and
+    # finds its previous checkpoints (converted images, per-page OCR/layout/
+    # classification json, already-parsed LLM json) still sitting there.
+    # A fresh request (no resume_run_id) always gets a brand new run_id.
+    is_resume = bool(payload.resume_run_id)
+    run_id = payload.resume_run_id if is_resume else uuid.uuid4().hex
 
     env = os.environ.copy()
     env["OCR_CALLBACK_URL"] = payload.callback_url
     env["OCR_RUN_ID"] = run_id
+    env["OCR_RESUME"] = "true" if is_resume else "false"
     env["OCR_CLAIM_ID"] = payload.claim_id
     env["OCR_DOCUMENT_ID"] = payload.document_id
     env["OCR_DOCUMENT_TYPE"] = payload.document_type
@@ -209,12 +222,17 @@ def _launch_job(payload: OCRJobRequest) -> tuple[int, str]:
             "claim_id": payload.claim_id,
             "document_id": payload.document_id,
             "document_type": payload.document_type,
-            "stage": "queued",
-            "stage_label": "Queued",
+            "stage": "resuming" if is_resume else "queued",
+            "stage_label": "Resuming from checkpoint" if is_resume else "Queued",
             "percent": 0,
             "status": "in_progress",
             "message": None,
         },
+    )
+
+    print(
+        f"[LAUNCH] {'Resuming' if is_resume else 'Starting'} OCR job "
+        f"claim={payload.claim_id} document={payload.document_id} run_id={run_id}"
     )
 
     proc = subprocess.Popen(
