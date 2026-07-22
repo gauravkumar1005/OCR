@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { UploadCloud, FileText, X, Loader2, AlertTriangle } from "lucide-react";
 import { uploadClaim } from "../api/client.js";
+import PageContainer from "../components/PageContainer.jsx";
 
 export default function UploadPage() {
   const navigate = useNavigate();
@@ -47,15 +48,15 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-5 md:px-10 py-10 md:py-16">
-      <header className="mb-10">
+    <PageContainer variant="narrow">
+      <header className="mb-5 md:mb-6">
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
           Intake — Step 01
         </p>
         <h1 className="font-display text-3xl md:text-4xl text-ink leading-tight">
           Drop the claim file on the desk
         </h1>
-        <p className="text-ink-soft mt-2 text-sm max-w-lg">
+        <p className="text-ink-soft mt-2 text-sm max-w-xl">
           Upload the source PDF — bills, discharge summary, insurance form,
           bank statement, whatever's stapled together. The OCR engine will
           split it into documents and pull out the fields automatically.
@@ -70,7 +71,7 @@ export default function UploadPage() {
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         onClick={() => inputRef.current?.click()}
-        className={`relative cursor-pointer border-2 border-dashed transition-colors px-6 py-14 flex flex-col items-center justify-center text-center ${
+        className={`relative cursor-pointer border-2 border-dashed transition-colors px-5 sm:px-6 py-10 sm:py-12 flex flex-col items-center justify-center text-center ${
           dragging
             ? "border-folder-dark bg-folder/15"
             : "border-ink/25 bg-white/40 hover:border-ink/40"
@@ -99,7 +100,7 @@ export default function UploadPage() {
           <div className="flex items-center gap-3 bg-white border border-ink/15 px-4 py-3 max-w-full">
             <FileText size={22} className="text-folder-dark shrink-0" />
             <div className="text-left min-w-0">
-              <p className="text-sm text-ink font-medium truncate max-w-[16rem]">
+              <p className="text-sm text-ink font-medium truncate max-w-[20rem] md:max-w-[28rem]">
                 {file.name}
               </p>
               <p className="text-xs text-ink-soft font-mono">
@@ -121,10 +122,10 @@ export default function UploadPage() {
         )}
       </div>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-[1fr_auto] items-end">
+      <div className="mt-5 md:mt-6 grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] items-end">
         <label className="block">
           <span className="text-xs font-mono uppercase tracking-wide text-ink-soft">
-            File / reference no.{" "}
+            File / reference no. {" "}
             <span className="normal-case text-ink-soft/60">(optional)</span>
           </span>
           <input
@@ -166,7 +167,7 @@ export default function UploadPage() {
         </div>
       )}
 
-      <div className="mt-14 grid sm:grid-cols-3 gap-4">
+      <div className="mt-10 md:mt-12 grid sm:grid-cols-3 gap-4">
         {[
           {
             n: "01",
@@ -191,6 +192,6 @@ export default function UploadPage() {
           </div>
         ))}
       </div>
-    </div>
+    </PageContainer>
   );
 }

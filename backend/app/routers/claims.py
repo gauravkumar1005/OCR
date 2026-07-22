@@ -37,6 +37,8 @@ from app.models.schemas import (
     ClaimResponse,
     ClaimDetailResponse,
     ClaimRetryResponse,
+    DashboardStatsResponse,
+    DayCount,
     DocumentOut,
     OcrEngineDispatchRequest,
     Warnings,
@@ -425,6 +427,81 @@ async def list_claims(
             )
         )
     return results
+
+
+@router.get("/stats/summary", response_model=DashboardStatsResponse)
+async def get_dashboard_stats():
+    """Aggregate counts for the frontend dashboard - claim status breakdown,
+    document type breakdown, a 7-day claim volume trend, and the most
+    recent claims. Declared BEFORE /{claim_id} below so "stats" is never
+    swallowed as a claim_id path parameter."""
+    total_claims = await claims_collection.count_documents({})
+
+    status_counts: Dict[str, int] = {}
+    async for row in claims_collection.aggregate(
+        [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
+    ):
+        status_counts[row["_id"] or "unknown"] = row["count"]
+
+    total_documents = await documents_collection.count_documents({})
+
+    documents_by_type: Dict[str, int] = {}
+    async for row in documents_collection.aggregate(
+        [{"$group": {"_id": "$document_type", "count": {"$sum": 1}}}]
+    ):
+        documents_by_type[row["_id"] or "unknown"] = row["count"]
+
+    # Last 7 days (including today) claim volume, zero-filled for days
+    # with no claims so the frontend can render a fixed-width bar chart.
+    today = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+    since = today - timedelta(days=6)
+    day_counts: Dict[str, int] = {}
+    async for row in claims_collection.aggregate(
+        [
+            {"$match": {"created_at": {"$gte": since}}},
+            {
+                "$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+    ):
+        day_counts[row["_id"]] = row["count"]
+
+    claims_last_7_days = [
+        DayCount(
+            date=(since + timedelta(days=i)).strftime("%Y-%m-%d"),
+            count=day_counts.get((since + timedelta(days=i)).strftime("%Y-%m-%d"), 0),
+        )
+        for i in range(7)
+    ]
+
+    recent_claims: List[ClaimResponse] = []
+    cursor = claims_collection.find().sort("created_at", DESCENDING).limit(5)
+    async for doc in cursor:
+        d = serialize_doc(doc)
+        summary = await _summarize_claim_documents(d["id"])
+        recent_claims.append(
+            ClaimResponse(
+                claim_id=d["id"],
+                file_no=d.get("file_no"),
+                source_file_url=d["source_file_url"],
+                status=d["status"],
+                created_at=d["created_at"],
+                updated_at=d["updated_at"],
+                **summary,
+            )
+        )
+
+    return DashboardStatsResponse(
+        total_claims=total_claims,
+        status_counts=status_counts,
+        total_documents=total_documents,
+        documents_by_type=documents_by_type,
+        claims_last_7_days=claims_last_7_days,
+        recent_claims=recent_claims,
+    )
 
 
 @router.get("/{claim_id}", response_model=ClaimDetailResponse)

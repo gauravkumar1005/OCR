@@ -231,3 +231,22 @@ class UserOut(BaseModel):
     email: str
     name: Optional[str] = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# 6. Dashboard summary (GET /claims/stats/summary) - aggregate counts for
+#    the frontend dashboard. Everything here is computed at read time from
+#    the claims/documents collections, nothing extra is stored.
+# ---------------------------------------------------------------------------
+class DayCount(BaseModel):
+    date: str  # YYYY-MM-DD
+    count: int
+
+
+class DashboardStatsResponse(BaseModel):
+    total_claims: int
+    status_counts: Dict[str, int] = Field(default_factory=dict)
+    total_documents: int
+    documents_by_type: Dict[str, int] = Field(default_factory=dict)
+    claims_last_7_days: List[DayCount] = Field(default_factory=list)
+    recent_claims: List[ClaimResponse] = Field(default_factory=list)

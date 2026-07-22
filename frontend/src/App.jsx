@@ -4,6 +4,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import RegisterPage from "./pages/RegisterPage.jsx";
+import DashboardPage from "./pages/DashboardPage.jsx";
 import UploadPage from "./pages/UploadPage.jsx";
 import StatusPage from "./pages/StatusPage.jsx";
 import ClaimsListPage from "./pages/ClaimsListPage.jsx";
@@ -23,6 +24,7 @@ export default function App() {
               <Layout>
                 <Routes>
                   <Route path="/" element={<UploadPage />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/status" element={<StatusPage />} />
                   <Route path="/status/:claimId" element={<StatusPage />} />
                   <Route path="/claims" element={<ClaimsListPage />} />

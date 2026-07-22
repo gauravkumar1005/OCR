@@ -192,5 +192,10 @@ export const updateTables = (claimId, documentType, tables) =>
 
 export const checkHealth = () => api.get("/health");
 
+// ---- Dashboard ----
+// Declared as /claims/stats/summary on the backend (ahead of /claims/{claim_id}
+// so "stats" never gets swallowed as a claim_id path param).
+export const getDashboardStats = () => api.get("/claims/stats/summary");
+
 
 

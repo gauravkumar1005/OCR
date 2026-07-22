@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import {
+  LayoutDashboard,
   UploadCloud,
   ScanLine,
   FolderOpen,
@@ -12,6 +13,7 @@ import SettingsModal from "./SettingsModal.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 
 const NAV_ITEMS = [
+  { to: "/dashboard", label: "Dashboard", index: "00", icon: LayoutDashboard },
   { to: "/", label: "Upload", index: "01", icon: UploadCloud, end: true },
   { to: "/status", label: "Processing", index: "02", icon: ScanLine },
   { to: "/claims", label: "Case Register", index: "03", icon: FolderOpen },

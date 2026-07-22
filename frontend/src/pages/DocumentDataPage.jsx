@@ -20,6 +20,7 @@ import {
   updateTables,
   updateClaimStatus,
 } from "../api/client.js";
+import PageContainer from "../components/PageContainer.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 function titleCase(s) {
@@ -319,34 +320,34 @@ export default function DocumentDataPage() {
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto px-5 md:px-10 py-16 flex items-center gap-2 text-ink-soft text-sm">
+      <PageContainer variant="full" className="flex items-center gap-2 text-ink-soft text-sm">
         <Loader2 size={16} className="animate-spin" />
         Opening case file…
-      </div>
+      </PageContainer>
     );
   }
 
   if (error) {
     return (
-      <div className="max-w-6xl mx-auto px-5 md:px-10 py-16">
+      <PageContainer variant="full">
         <div className="flex items-center gap-2 bg-stamp-red-soft border border-stamp-red/30 text-stamp-red px-4 py-3 text-sm">
           <FileWarning size={16} />
           {error}
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-5 md:px-10 py-8 md:py-12">
+    <PageContainer variant="full">
       <button
         onClick={() => navigate("/claims")}
-        className="flex items-center gap-1 text-xs font-mono text-ink-soft hover:text-ink mb-6"
+        className="flex items-center gap-1 text-xs font-mono text-ink-soft hover:text-ink mb-5 md:mb-6"
       >
         <ChevronLeft size={13} /> case register
       </button>
 
-      <header className="mb-8 flex flex-wrap items-start justify-between gap-4 pb-6 border-b border-ink/10">
+      <header className="mb-5 md:mb-6 flex flex-wrap items-start justify-between gap-4 pb-5 border-b border-ink/10">
         <div className="min-w-0">
           <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
             Step 04 · Document-wise data
@@ -383,8 +384,7 @@ export default function DocumentDataPage() {
         </div>
       ) : (
         <div className="lg:flex lg:items-start lg:gap-8">
-          {/* Folder tabs */}
-          <div className="lg:w-60 shrink-0 mb-6 lg:mb-0 lg:sticky lg:top-8">
+          <div className="lg:w-64 xl:w-72 shrink-0 mb-6 lg:mb-0 lg:sticky lg:top-8">
             <p className="text-[10px] font-mono uppercase tracking-wide text-ink-soft/70 mb-2 px-1 hidden lg:block">
               {docs.length} document{docs.length !== 1 ? "s" : ""}
             </p>
@@ -422,16 +422,15 @@ export default function DocumentDataPage() {
             </div>
           </div>
 
-          {/* Active document detail */}
           {activeDoc && (
             <div className="flex-1 min-w-0 space-y-6">
-              <div className="sticky top-14 md:top-0 z-10 -mx-5 md:-mx-10 lg:mx-0 px-5 md:px-10 lg:px-0 py-3.5 bg-paper/95 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3 border-b border-ink/15">
+              <div className="sticky top-14 md:top-0 z-10 -mx-4 sm:-mx-5 md:-mx-6 xl:-mx-8 lg:mx-0 px-4 sm:px-5 md:px-6 xl:px-8 lg:px-0 py-3.5 bg-paper/95 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3 border-b border-ink/15">
                 <div className="min-w-0">
                   <h2 className="font-display text-xl text-ink truncate">
                     {titleCase(activeDoc.document_type)}
                   </h2>
                   <p className="text-xs text-ink-soft font-mono mt-0.5 truncate">
-                    {activeDoc.source_file_name} · pages{" "}
+                    {activeDoc.source_file_name} · pages {" "}
                     {activeDoc.pages_processed?.join(", ") || "—"}
                   </p>
                 </div>
@@ -449,40 +448,36 @@ export default function DocumentDataPage() {
                     ) : (
                       <Save size={14} />
                     )}
-                    {saved ? "Saved" : hasChanges ? `Save ${Object.keys(fieldsForActive).length} change${Object.keys(fieldsForActive).length !== 1 ? "s" : ""}` : "Save changes"}
+                    {saved
+                      ? "Saved"
+                      : hasChanges
+                      ? `Save ${Object.keys(fieldsForActive).length} change${
+                          Object.keys(fieldsForActive).length !== 1 ? "s" : ""
+                        }`
+                      : "Save changes"}
                   </button>
                 </div>
               </div>
 
-              {/* Warnings */}
               {(activeDoc.warnings?.ignored_handwritten_content?.length > 0 ||
-                activeDoc.warnings?.unmapped_ambiguous_text_regions?.length >
-                  0) && (
+                activeDoc.warnings?.unmapped_ambiguous_text_regions?.length > 0) && (
                 <div className="flex items-start gap-2 bg-amber-soft border border-amber/30 text-amber px-4 py-3 text-xs">
                   <AlertTriangle size={15} className="shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    {activeDoc.warnings.ignored_handwritten_content?.length >
-                      0 && (
+                    {activeDoc.warnings.ignored_handwritten_content?.length > 0 && (
                       <p>
-                        {activeDoc.warnings.ignored_handwritten_content.length}{" "}
-                        handwritten region(s) were ignored.
+                        {activeDoc.warnings.ignored_handwritten_content.length} handwritten region(s) were ignored.
                       </p>
                     )}
-                    {activeDoc.warnings.unmapped_ambiguous_text_regions
-                      ?.length > 0 && (
+                    {activeDoc.warnings.unmapped_ambiguous_text_regions?.length > 0 && (
                       <p>
-                        {
-                          activeDoc.warnings.unmapped_ambiguous_text_regions
-                            .length
-                        }{" "}
-                        ambiguous region(s) could not be mapped.
+                        {activeDoc.warnings.unmapped_ambiguous_text_regions.length} ambiguous region(s) could not be mapped.
                       </p>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Entities form */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-mono uppercase tracking-wide text-ink-soft">
@@ -495,7 +490,7 @@ export default function DocumentDataPage() {
                     </p>
                   )}
                 </div>
-                <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-5 bg-white border border-ink/15 p-5 md:p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-x-6 gap-y-5 bg-white border border-ink/15 p-5 md:p-6">
                   {Object.entries(displayEntities).map(([field, value]) => {
                     const current =
                       fieldsForActive[field] !== undefined
@@ -548,13 +543,12 @@ export default function DocumentDataPage() {
                     );
                   })}
                   {totalFields === 0 && (
-                    <p className="text-sm text-ink-soft italic sm:col-span-2 xl:col-span-3">
+                    <p className="text-sm text-ink-soft italic md:col-span-2 xl:col-span-3 2xl:col-span-4">
                       No fields were extracted for this document.
                     </p>
                   )}
 
-                  {/* Add a new field the OCR engine didn't extract */}
-                  <div className="sm:col-span-2 xl:col-span-3 flex flex-wrap items-end gap-2 pt-2 border-t border-ink/10 mt-1">
+                  <div className="md:col-span-2 xl:col-span-3 2xl:col-span-4 flex flex-wrap items-end gap-2 pt-2 border-t border-ink/10 mt-1">
                     <label className="block">
                       <span className="text-[11px] font-mono uppercase tracking-wide text-ink-soft/80 block mb-1">
                         Field name
@@ -589,7 +583,6 @@ export default function DocumentDataPage() {
                 </div>
               </div>
 
-              {/* Tables */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-mono uppercase tracking-wide text-ink-soft flex items-center gap-1.5">
@@ -744,6 +737,6 @@ export default function DocumentDataPage() {
           )}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

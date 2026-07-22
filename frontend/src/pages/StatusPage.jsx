@@ -10,6 +10,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { getClaim, getClaimProgress, retryClaim } from "../api/client.js";
+import PageContainer from "../components/PageContainer.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 const TERMINAL = ["completed", "failed", "error"];
@@ -107,8 +108,8 @@ export default function StatusPage() {
   const pct = totalDocs ? Math.round((completedDocs / totalDocs) * 100) : 0;
 
   return (
-    <div className="max-w-3xl mx-auto px-5 md:px-10 py-10 md:py-16">
-      <header className="mb-8">
+    <PageContainer variant="wide">
+      <header className="mb-5 md:mb-6">
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
           Intake — Step 02
         </p>
@@ -120,8 +121,8 @@ export default function StatusPage() {
         </p>
       </header>
 
-      <form onSubmit={goToClaim} className="flex gap-2 mb-10">
-        <div className="relative flex-1">
+      <form onSubmit={goToClaim} className="flex gap-2 mb-6 md:mb-7">
+        <div className="relative flex-1 min-w-0">
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft"
@@ -142,7 +143,7 @@ export default function StatusPage() {
       </form>
 
       {loading && (
-        <div className="flex items-center gap-2 text-ink-soft text-sm">
+        <div className="flex items-center gap-2 text-ink-soft text-sm py-4">
           <Loader2 size={16} className="animate-spin" />
           Fetching claim…
         </div>
@@ -282,6 +283,7 @@ export default function StatusPage() {
           </p>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
+
