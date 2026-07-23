@@ -110,9 +110,6 @@ export default function StatusPage() {
   return (
     <PageContainer variant="wide">
       <header className="mb-5 md:mb-6">
-        <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
-          Intake — Step 02
-        </p>
         <h1 className="font-display text-3xl md:text-4xl text-ink leading-tight">
           Watch the scan run
         </h1>

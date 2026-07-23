@@ -48,11 +48,8 @@ export default function UploadPage() {
   };
 
   return (
-    <PageContainer variant="narrow">
+    <PageContainer variant="full">
       <header className="mb-5 md:mb-6">
-        <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
-          Intake — Step 01
-        </p>
         <h1 className="font-display text-3xl md:text-4xl text-ink leading-tight">
           Drop the claim file on the desk
         </h1>

@@ -78,9 +78,6 @@ export default function ClaimsListPage() {
     <PageContainer variant="full">
       <header className="mb-5 md:mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-folder-dark mb-2">
-            Step 03
-          </p>
           <h1 className="font-display text-3xl md:text-4xl text-ink leading-tight">
             Case register
           </h1>
