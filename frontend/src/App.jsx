@@ -23,8 +23,8 @@ export default function App() {
             <ProtectedRoute>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<UploadPage />} />
-                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/" element={<DashboardPage />} />
+                  <Route path="/upload" element={<UploadPage />} />
                   <Route path="/status" element={<StatusPage />} />
                   <Route path="/status/:claimId" element={<StatusPage />} />
                   <Route path="/claims" element={<ClaimsListPage />} />

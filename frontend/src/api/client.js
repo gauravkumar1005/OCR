@@ -45,16 +45,19 @@ export function setOnAuthExpired(handler) {
   onAuthExpired = handler;
 }
 
-// Only these are called *before* we have a session (or to establish one),
-// so they should never carry a stale Bearer token, and a 401 from them is
-// a real auth failure, not an "access token expired, please refresh" case.
-// /auth/me is deliberately NOT in this list - it's a protected endpoint
-// and needs the same token-attach + refresh-on-401 behavior as everything
-// else, or every login would 401 on the very next /auth/me call.
 const PUBLIC_AUTH_PATHS = ["/auth/signup", "/auth/login", "/auth/refresh"];
 
 function isPublicAuthEndpoint(url) {
   return PUBLIC_AUTH_PATHS.some((path) => url?.startsWith(path));
+}
+
+function buildDocumentParams(options = {}) {
+  const params = {};
+  if (options.source_file_name) params.source_file_name = options.source_file_name;
+  if (options.sequence !== undefined && options.sequence !== null) {
+    params.sequence = options.sequence;
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
 }
 
 export const api = axios.create({
@@ -70,8 +73,6 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Refresh-on-401: queue concurrent requests behind a single in-flight
-// refresh call instead of firing one refresh per failed request.
 let refreshPromise = null;
 
 async function performRefresh() {
@@ -144,14 +145,8 @@ export const deleteClaim = (claimId) => api.delete(`/claims/${claimId}`);
 export const updateClaimStatus = (claimId, status) =>
   api.patch(`/claims/${claimId}/status`, { status });
 
-// Re-dispatches OCR for a failed/interrupted claim. If the engine still has
-// a checkpointed run for this claim, it resumes from wherever processing
-// broke off instead of starting the PDF over from page 1.
 export const retryClaim = (claimId) => api.post(`/claims/${claimId}/retry`);
 
-// Live pipeline stage for a claim, proxied from the OCR engine (see
-// backend's /claims/{claim_id}/progress - it never talks to the engine
-// from the browser directly).
 export const getClaimProgress = (claimId) =>
   api.get(`/claims/${claimId}/progress`);
 
@@ -159,43 +154,46 @@ export const getClaimProgress = (claimId) =>
 export const listDocuments = (claimId) =>
   api.get(`/claims/${claimId}/documents`);
 
-export const getDocument = (claimId, documentType) =>
-  api.get(`/claims/${claimId}/documents/${documentType}`);
-
-// Backend expects one field at a time: { key: "field_name", value: "new value" }
-export const updateEntity = (claimId, documentType, key, value) =>
-  api.patch(`/claims/${claimId}/documents/${documentType}/entities`, {
-    key,
-    value,
+export const getDocument = (claimId, documentType, options = {}) =>
+  api.get(`/claims/${claimId}/documents/${documentType}`, {
+    params: buildDocumentParams(options),
   });
 
-// Convenience: save several changed fields by firing one PATCH per field.
-export const updateEntities = async (claimId, documentType, changedFields) => {
+export const updateEntity = (claimId, documentType, key, value, options = {}) =>
+  api.patch(
+    `/claims/${claimId}/documents/${documentType}/entities`,
+    {
+      key,
+      value,
+    },
+    { params: buildDocumentParams(options) }
+  );
+
+export const updateEntities = async (
+  claimId,
+  documentType,
+  changedFields,
+  options = {}
+) => {
   const entries = Object.entries(changedFields);
   const results = [];
   for (const [key, value] of entries) {
-    results.push(await updateEntity(claimId, documentType, key, value));
+    results.push(await updateEntity(claimId, documentType, key, value, options));
   }
   return results;
 };
 
-// Reviewer removes a field entirely (not just blanks it out).
-export const deleteEntity = (claimId, documentType, key) =>
-  api.delete(
-    `/claims/${claimId}/documents/${documentType}/entities/${encodeURIComponent(key)}`
-  );
+export const deleteEntity = (claimId, documentType, key, options = {}) =>
+  api.delete(`/claims/${claimId}/documents/${documentType}/entities/${encodeURIComponent(key)}`, {
+    params: buildDocumentParams(options),
+  });
 
-// Reviewer adds/edits/removes tables, rows, columns, or cells - sends the
-// whole edited tables array in one shot (tables are dynamic in shape).
-export const updateTables = (claimId, documentType, tables) =>
-  api.put(`/claims/${claimId}/documents/${documentType}/tables`, { tables });
+export const updateTables = (claimId, documentType, tables, options = {}) =>
+  api.put(`/claims/${claimId}/documents/${documentType}/tables`, { tables }, {
+    params: buildDocumentParams(options),
+  });
 
 export const checkHealth = () => api.get("/health");
 
 // ---- Dashboard ----
-// Declared as /claims/stats/summary on the backend (ahead of /claims/{claim_id}
-// so "stats" never gets swallowed as a claim_id path param).
 export const getDashboardStats = () => api.get("/claims/stats/summary");
-
-
-
