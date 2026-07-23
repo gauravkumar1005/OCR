@@ -162,7 +162,7 @@ export default function DashboardPage() {
           <h1 className="font-display text-3xl md:text-4xl text-ink leading-tight">
             Dashboard
           </h1>
-          <p className="text-ink-soft mt-2 text-sm max-w-lg">
+          {/* <p className="text-ink-soft mt-2 text-sm max-w-lg">
             {totalClaims > 0 ? (
               <>
                 <span className="text-ink font-medium">{totalClaims}</span>{" "}
@@ -186,7 +186,7 @@ export default function DashboardPage() {
             ) : (
               "A snapshot of every claim on file — status, volume, and what still needs attention."
             )}
-          </p>
+          </p> */}
         </div>
         <button
           onClick={() => load(true)}
